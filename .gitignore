@@ -1,0 +1,14 @@
+# Build outputs
+*.exe
+*.o
+*.obj
+build/
+bin/
+
+# Visual Studio / VS Code build artifacts
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln
+*.vcxproj.user
