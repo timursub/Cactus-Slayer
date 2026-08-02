@@ -28,6 +28,18 @@ struct Mushroom {
     MushroomType type;
 };
 
+struct PlayerUpgrades {
+    int highScore = 0;
+    
+    // Mushroom Levels (0 to Max)
+    int shieldLvl = 0; // Level 0 = 1s, Level 6 = 7s
+    int hpMushroomLvl = 0;     // Level 0 = +1 HP, Level 4 = +5 HP
+    int killMushroomLvl = 0;   // Level 0 = 1 cactus, Level 1 = 2 cactuses
+    int mushSpawnRateLvl = 0;      // Increases 15% spawn chance up to e.g. 35%
+    int playerHpLvl = 0; // Level 0 = 5 HP, Level 5 = 10 HP
+    int knifeLvl = 0; // Level 0 = 1 knife, Level 1 = 2 knives
+};
+
 // Global vector for mushrooms on screen
 std::vector<Mushroom> mushrooms;
 // Global list of cactuses
@@ -101,7 +113,7 @@ bool IsShieldActive(float shieldEndTime) {
 
 // how many cactuses should be on screen based on the score
 int GetCactusAmount(int score) {
-    if (score >= 25000) return 3;
+    if (score >= 30000) return 3;
     if (score >= 5000)  return 2;
     return 1;
 }
@@ -163,11 +175,17 @@ int main()
     // Seed random number generator
     srand(time(NULL));
 
-    InitWindow(600, 1100, "Cactus Grid - Cactuses");
+    const int gameWidth = 360;
+    const int gameHeight = 640;
+
+    InitWindow(540, 960, "Cactus Grid - Pixel Edition");
     SetTargetFPS(60);
 
+    RenderTexture2D target = LoadRenderTexture(gameWidth, gameHeight);
+    SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
+
     // Restart Button size
-    Rectangle restartBtn = { 150, 520, 300, 90 };
+    Rectangle restartBtn = { 80, 360, 200, 60 };
 
     // Hero initial position (Center)
     Position hero = {1, 1};
@@ -189,6 +207,14 @@ int main()
         // GAME LOOP
     while (!WindowShouldClose()) 
     {
+        // Calculate virtual mouse coordinates for scaled canvas UI checks
+        Vector2 rawMouse = GetMousePosition();
+        Vector2 mousePoint = 
+        {
+            rawMouse.x * ((float)gameWidth / GetScreenWidth()),
+            rawMouse.y * ((float)gameHeight / GetScreenHeight())
+        };
+
         if(gameState == STATE_PLAYING)
         {   
         
@@ -414,39 +440,37 @@ int main()
         // GAME OVER INPUT
         else if (gameState == STATE_GAME_OVER) 
         {
-            Vector2 mousePoint = GetMousePosition();
-            
-            // Check if mouse clicked inside the Restart button rectangle
+            // Check if user clicked the left mouse button while hovering over the restart button
             if (CheckCollisionPointRec(mousePoint, restartBtn)) {
-                if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
                     ResetGame(hero, score, flowers, hp, shieldEndTime, gameState);
                 }
             }
         }
 
         // RENDER
-        BeginDrawing();
+        BeginTextureMode(target);
             ClearBackground(GRAY);
 
             // UPPER MENUE UI
         // Top left stats
-        DrawText(TextFormat("HI-SCORE: %d", highestScore), 30, 20, 28, GOLD);
-        DrawText(TextFormat("SCORE: %d", score), 30, 60, 28, BLACK);
-        DrawText(TextFormat("HP: %d", hp), 30, 100, 28, RED);
+        DrawText(TextFormat("HI-SCORE: %d", highestScore), 15, 15, 18, GOLD);
+        DrawText(TextFormat("SCORE: %d", score), 15, 40, 18, BLACK);
+        DrawText(TextFormat("HP: %d", hp), 15, 65, 18, RED);
 
         // Top right - flowers
-        DrawText("FLOWERS", 400, 30, 22, DARKGREEN);
+        DrawText("FLOWERS", 250, 18, 14, DARKGREEN);
 
             for (int i = 0; i < 3; i++) {
-                int slotX = 410 + (i * 45); // Spacing flowers 45px apart horizontally
-                int slotY = 85;
+                int slotX = 250 + (i * 30); // Spacing flowers 45px apart horizontally
+                int slotY = 50;
 
                 // Pick color: Active if collected, Gray if empty
                 Color flowerColor = (i < flowers) ? PINK : DARKGRAY;
 
                 // Draw Flower Icon (Center circle + outer ring/petals)
-                DrawCircle(slotX, slotY, 14, flowerColor);
-                DrawCircleLines(slotX, slotY, 15, WHITE); // White border
+                DrawCircle(slotX, slotY, 9, flowerColor);
+                DrawCircleLines(slotX, slotY, 10, WHITE); // White border
             }
 
                 //  3X3 GRID
@@ -454,27 +478,27 @@ int main()
                 {
                     for (int c = 0; c < 3; c++) 
                     {
-                        DrawRectangleLines((c * 180)+30, (r * 280) + 200, 180, 280, DARKGRAY);
+                        DrawRectangleLines((c * 100)+30, (r * 130) + 160, 100, 130, DARKGRAY);
                     }
                 }
 
             //  Draw Cactuses 
             for (const auto& cactus : cactuses) {
-                int cactusPixelX = cactus.x * 180 + 70;  // Centered inside 180 width
-                int cactusPixelY = cactus.y * 280 + 275;  // Centered inside 280 height
-                DrawRectangle(cactusPixelX, cactusPixelY, 100, 150, DARKGREEN);
+                int cactusPixelX = cactus.x * 100 + 45;  // Centered inside 100 width
+                int cactusPixelY = cactus.y * 130 + 185;  // Centered inside 130 height
+                DrawRectangle(cactusPixelX, cactusPixelY, 70, 80, DARKGREEN);
             }
 
             //  Draw Hero 
-            int heroPixelX = hero.x * 180 + 125;
-            int heroPixelY = hero.y * 280 + 350;
-            DrawCircle(heroPixelX, heroPixelY, 40, BLUE);
+            int heroPixelX = hero.x * 100 + 80;
+            int heroPixelY = hero.y * 130 + 225;
+            DrawCircle(heroPixelX, heroPixelY, 22, BLUE);
 
             
                 //Draw Mashrooms
             for (const auto& m : mushrooms) {
-                int mPixelX = m.pos.x * 180 + 125;
-                int mPixelY = m.pos.y * 280 + 350;
+                int mPixelX = m.pos.x * 100 + 80;
+                int mPixelY = m.pos.y * 130 + 225;
 
                 Color mColor = PURPLE; // Default
                 if (m.type == MSH_HP) mColor = RED;
@@ -482,14 +506,13 @@ int main()
                 else if (m.type == MSH_KILL_CACTUS) mColor = ORANGE;
 
                 // Draw mushroom cap
-                DrawCircle(mPixelX, mPixelY, 25, mColor);
+                DrawCircle(mPixelX, mPixelY, 14, mColor);
             }
 
             // Optional: Draw a shield aura around the hero if active!
-            if (GetTime() < shieldEndTime) {
-                int heroPixelX = hero.x * 180 + 125;
-                int heroPixelY = hero.y * 280 + 350;
-                DrawCircleLines(heroPixelX, heroPixelY, 50, SKYBLUE);
+            if (IsShieldActive(shieldEndTime)) 
+            {
+                DrawCircleLines(heroPixelX, heroPixelY, 28, SKYBLUE);
             }
 
             //  Draw Game Over Screen & Restart Button
@@ -498,7 +521,7 @@ int main()
                 DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(BLACK, 0.7f));
 
                 // Game Over Title
-                DrawText("GAME OVER", 130, 420, 50, RED);
+                DrawText("GAME OVER", 60, 260, 36, RED);
 
                 // Highlight button color when hovering with mouse
                 Vector2 mousePoint = GetMousePosition();
@@ -509,15 +532,25 @@ int main()
 
                 // Draw button shape & border
                 DrawRectangleRec(restartBtn, btnColor);
-                DrawRectangleLinesEx(restartBtn, 4, WHITE);
+                DrawRectangleLinesEx(restartBtn, 3, WHITE);
                 
                 // Draw button text
-                DrawText("RESTART", restartBtn.x + 40, restartBtn.y + 25, 40, WHITE);
+                DrawText("RESTART", restartBtn.x + 35, restartBtn.y + 18, 28, WHITE);
             }
 
+        EndTextureMode();
+
+        BeginDrawing();
+            ClearBackground(BLACK);
+
+            Rectangle srcRec = { 0.0f, 0.0f, (float)gameWidth, (float)-gameHeight };
+            Rectangle destRec = { 0.0f, 0.0f, (float)GetScreenWidth(), (float)GetScreenHeight() };
+
+            DrawTexturePro(target.texture, srcRec, destRec, { 0, 0 }, 0.0f, WHITE);
         EndDrawing();
     }
 
+    UnloadRenderTexture(target);
     CloseWindow();
     return 0;
 }
