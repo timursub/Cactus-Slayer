@@ -126,7 +126,7 @@ enum GameState {
 };
 
 
-// Mashroom spawn
+// Mushroom spawn
 void SpawnMushroom(Position heroPos) {
     while (true) {
         int randX = rand() % 3;
@@ -155,14 +155,16 @@ void SpawnMushroom(Position heroPos) {
 }
 
 // reset game after the game over
-void ResetGame(Position& hero, int& score, int& flowers, int& hp, float& shieldEndTime, GameState& state) {
+void ResetGame(Position& hero, int& score, int& flowers, int& hp, int& dashCharges, float& shieldEndTime, GameState& state) {
     hero = {1, 1};
     score = 0;
     flowers = 0;
     hp = 5;
     shieldEndTime = 0.0f;
+    
     cactuses.clear();
     mushrooms.clear();
+    dashCharges = 3;
 
     SpawnCactus(hero);
     state = STATE_PLAYING;
@@ -193,6 +195,9 @@ int main()
     int highestScore = 0;
     int flowers = 0;
     int hp = 5;
+    int dashCharges = 0;
+    int movesToCactusRespawn = 0;
+    const int MAX_DASH_CHARGES = 3; // Max dash charges
     GameState gameState = STATE_PLAYING;
     float shieldEndTime = 0; 
     //chack if we need new cactus
@@ -222,26 +227,27 @@ int main()
             Position nextHeroPos = hero;
             bool moved = false;
             bool isDash = false;
-            bool spaceHeld = IsKeyDown(KEY_SPACE) || IsKeyPressed(KEY_SPACE);
+            // Space key held down and shield not active
+            bool canDash = ((IsKeyDown(KEY_SPACE) || IsKeyPressed(KEY_SPACE)) && !IsShieldActive(shieldEndTime)) && (dashCharges > 0); 
             
             if (IsKeyPressed(KEY_RIGHT)) {
                 // Hold Space at x=0 -> Dash all the way RIGHT to x=2
-                if (spaceHeld && hero.x == 0) { nextHeroPos.x = 2; moved = true; isDash = true; }
+                if (canDash && hero.x == 0) { nextHeroPos.x = 2; moved = true; isDash = true; }
                 else if (hero.x < 2)          { nextHeroPos.x++; moved = true; }
             }
             if (IsKeyPressed(KEY_LEFT)) {
                 // Hold Space at x=2 -> Dash all the way LEFT to x=0
-                if (spaceHeld && hero.x == 2) { nextHeroPos.x = 0; moved = true; isDash = true; }
+                if (canDash && hero.x == 2) { nextHeroPos.x = 0; moved = true; isDash = true; }
                 else if (hero.x > 0)          { nextHeroPos.x--; moved = true; }
             }
             if (IsKeyPressed(KEY_DOWN)) {
                 // Hold Space at y=0 -> Dash all the way DOWN to y=2
-                if (spaceHeld && hero.y == 0) { nextHeroPos.y = 2; moved = true; isDash = true; }
+                if (canDash && hero.y == 0) { nextHeroPos.y = 2; moved = true; isDash = true; }
                 else if (hero.y < 2)          { nextHeroPos.y++; moved = true; }
             }
             if (IsKeyPressed(KEY_UP)) {
                 // Hold Space at y=2 -> Dash all the way UP to y=0
-                if (spaceHeld && hero.y == 2) { nextHeroPos.y = 0; moved = true; isDash = true; }
+                if (canDash && hero.y == 2) { nextHeroPos.y = 0; moved = true; isDash = true; }
                 else if (hero.y > 0)          { nextHeroPos.y--; moved = true; }
             }
 
@@ -250,14 +256,24 @@ int main()
             if (moved || isDash) 
             {
                
-                if (pendingCactusRespawn) {
-                    SpawnCactus(hero);
-                    pendingCactusRespawn = false;
+                if (pendingCactusRespawn) 
+                {
+                    movesToCactusRespawn--; // Count down 1 move
+        
+                    // When 2 moves have passed, trigger the spawn and turn off flag
+                    if (movesToCactusRespawn <= 0) 
+                    {
+                        SpawnCactus(hero);
+                        pendingCactusRespawn = false;
+                    }
                 }
             }
 
             if (isDash) 
             {   
+                // Consume a dash charge
+                dashCharges--;
+
                 //Calculates the bounds
                 int startX = std::min(hero.x, nextHeroPos.x);
                 int endX   = std::max(hero.x, nextHeroPos.x);
@@ -308,6 +324,7 @@ int main()
                                     
                                     //Marks that cactus need to be respawned
                                     pendingCactusRespawn = true; 
+                                    movesToCactusRespawn = 2;
                                 }
                             }
                         }
@@ -327,9 +344,10 @@ int main()
 
 
                 //spawn mashroom
-                if (score >= 15000) {
+                if (score >= 15000) 
+                {
                     //15% chance
-                    if ((rand() % 100) < 5) {
+                    if ((rand() % 100) < 7) {
                        // one mashroom limit
                         if (mushrooms.empty()) {
                             SpawnMushroom(hero);
@@ -338,7 +356,13 @@ int main()
                 }
             }
             else if (moved)
-            {    // move hero if the space is NOT blocked 
+            {   
+                // If the hero moved, restore a dash charge if not full
+                if (dashCharges < MAX_DASH_CHARGES) {
+                dashCharges++;
+                }
+
+                // move hero if the space is NOT blocked 
                 if (!IsCactusAt(nextHeroPos)) 
                 {
                     hero = nextHeroPos;
@@ -384,6 +408,7 @@ int main()
                                     
                                     //Marks that cactus need to be respawned
                                     pendingCactusRespawn = true; 
+                                    movesToCactusRespawn = 2;
                                 }
                             }
                         it = mushrooms.erase(it); // Remove collected mushroom
@@ -414,15 +439,21 @@ int main()
                 flowers = flowers - 3;
             }
 
-                //ubdates highst score
+                //updates highest score
             if (score > highestScore) highestScore = score;
         
-                //Cakcukates how many cactuses should be on screen
+                //Calculates how many cactuses should be on screen
             int targetCactuses = GetCactusAmount(score);
 
-            // If a mushroom killed a cactus on this move, hold back 1 slot from spawning right now!
+
+            // Hold off spawning extra cactuses while waiting for the timer
             if (pendingCactusRespawn) {
                 targetCactuses--;
+            }
+
+            while ((int)cactuses.size() < targetCactuses) 
+            {
+                SpawnCactus(hero);
             }
 
             // Fill up to the target amount
@@ -443,7 +474,7 @@ int main()
             // Check if user clicked the left mouse button while hovering over the restart button
             if (CheckCollisionPointRec(mousePoint, restartBtn)) {
                 if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
-                    ResetGame(hero, score, flowers, hp, shieldEndTime, gameState);
+                    ResetGame(hero, score, flowers, hp, dashCharges, shieldEndTime, gameState);
                 }
             }
         }
@@ -461,7 +492,8 @@ int main()
         // Top right - flowers
         DrawText("FLOWERS", 250, 18, 14, DARKGREEN);
 
-            for (int i = 0; i < 3; i++) {
+            for (int i = 0; i < 3; i++) 
+            {
                 int slotX = 250 + (i * 30); // Spacing flowers 45px apart horizontally
                 int slotY = 50;
 
@@ -471,6 +503,15 @@ int main()
                 // Draw Flower Icon (Center circle + outer ring/petals)
                 DrawCircle(slotX, slotY, 9, flowerColor);
                 DrawCircleLines(slotX, slotY, 10, WHITE); // White border
+            }
+
+            // Draw Dash Charges UI under HP
+            DrawText("DASH:", 15, 90, 14, DARKBLUE);
+            for (int i = 0; i < MAX_DASH_CHARGES; i++) 
+            {
+                Color dashColor = (i < dashCharges) ? BLUE : DARKGRAY;
+                DrawRectangle(65 + (i * 18), 92, 14, 10, dashColor);
+                DrawRectangleLines(65 + (i * 18), 92, 14, 10, WHITE);
             }
 
                 //  3X3 GRID
