@@ -15,14 +15,32 @@ struct Position {
     }
 };
 
-//mashroom types
+
+
+//mushroom types
 enum MushroomType {
     MSH_HP,          // +1 HP
     MSH_SHIELD,      // Shield for 15 seconds
     MSH_KILL_CACTUS  // Kills a random cactus
 };
 
-//mashroom constructor
+enum StorageKey {
+    STORAGE_HIGHEST_SCORE = 0,
+    STORAGE_SHIELD_LVL    = 1,
+    STORAGE_HP_MUSH_LVL   = 2,
+    STORAGE_KILL_MUSH_LVL = 3,
+    STORAGE_SPAWN_RATE_LVL= 4,
+    STORAGE_PLAYER_HP_LVL = 5,
+    STORAGE_KNIFE_LVL     = 6
+};
+
+
+//knife constructor
+struct Knife {
+    Position pos;
+};
+
+//mushroom constructor
 struct Mushroom {
     Position pos;
     MushroomType type;
@@ -40,10 +58,17 @@ struct PlayerUpgrades {
     int knifeLvl = 0; // Level 0 = 1 knife, Level 1 = 2 knives
 };
 
+struct SaveData {
+    int highestScore = 0;
+    PlayerUpgrades upgrades;
+};
+
 // Global vector for mushrooms on screen
 std::vector<Mushroom> mushrooms;
 // Global list of cactuses
 std::vector<Position> cactuses;
+//Global vector for Knife
+std::vector<Knife> droppedKnives;
 
 
 // Function to spawn a cactus on any random empty cell
@@ -125,6 +150,19 @@ enum GameState {
     STATE_GAME_OVER
 };
 
+// App Scenes
+enum AppScene {
+    SCENE_MAIN_MENU,
+    SCENE_GAME,
+    SCENE_UPGRADES
+};
+
+// Movement Control Scheme
+enum ControlScheme {
+    CONTROL_KEYBOARD,
+    CONTROL_MOUSE
+};
+
 
 // Mushroom spawn
 void SpawnMushroom(Position heroPos) {
@@ -155,7 +193,7 @@ void SpawnMushroom(Position heroPos) {
 }
 
 // reset game after the game over
-void ResetGame(Position& hero, int& score, int& flowers, int& hp, int& dashCharges, float& shieldEndTime, GameState& state) {
+void ResetGame(Position& hero, int& score, int& flowers, int& hp, int& dashCharges, int& availableKnives, float& shieldEndTime, GameState& state) {
     hero = {1, 1};
     score = 0;
     flowers = 0;
@@ -164,10 +202,45 @@ void ResetGame(Position& hero, int& score, int& flowers, int& hp, int& dashCharg
     
     cactuses.clear();
     mushrooms.clear();
+    droppedKnives.clear();
+
     dashCharges = 3;
+    availableKnives = 1;
 
     SpawnCactus(hero);
     state = STATE_PLAYING;
+}
+
+// Save data directly to storage file
+void SaveGameData(int highestScore, const PlayerUpgrades& upgrades) {
+    SaveData data;
+    data.highestScore = highestScore;
+    data.upgrades = upgrades;
+
+    // SaveFileData automatically works cross-platform (and syncs on Web/Itch.io)
+    SaveFileData("save.data", &data, sizeof(SaveData));
+}
+
+// Load data from storage file
+void LoadGameData(int& highestScore, PlayerUpgrades& upgrades) {
+    if (FileExists("save.data")) {
+        int bytesRead = 0;
+        unsigned char* fileData = LoadFileData("save.data", &bytesRead);
+
+        if (fileData != NULL && bytesRead == sizeof(SaveData)) {
+            SaveData* loadedData = (SaveData*)fileData;
+            highestScore = loadedData->highestScore;
+            upgrades = loadedData->upgrades;
+        }
+
+        // Raylib requires freeing loaded file memory after use
+        UnloadFileData(fileData);
+    }
+}
+
+// Returns the flower cost to upgrade a feature
+int GetUpgradeCost(int currentLevel) {
+    return (currentLevel + 1) * 30; // e.g., Level 0->1 costs 30 flowers, 1->2 costs 60 flowers
 }
 
 
@@ -183,6 +256,11 @@ int main()
     InitWindow(540, 960, "Cactus Grid - Pixel Edition");
     SetTargetFPS(60);
 
+    //init highest score, and load save from storage
+    int highestScore = 0;
+    PlayerUpgrades playerUpgrades;
+    LoadGameData(highestScore, playerUpgrades);
+
     RenderTexture2D target = LoadRenderTexture(gameWidth, gameHeight);
     SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
 
@@ -192,22 +270,44 @@ int main()
     // Hero initial position (Center)
     Position hero = {1, 1};
     int score = 0;
-    int highestScore = 0;
     int flowers = 0;
     int hp = 5;
     int dashCharges = 0;
     int movesToCactusRespawn = 0;
+    int maxKnives = 1;        
+    int availableKnives = 1;  
     const int MAX_DASH_CHARGES = 3; // Max dash charges
     GameState gameState = STATE_PLAYING;
     float shieldEndTime = 0; 
     //chack if we need new cactus
     bool pendingCactusRespawn = false; 
 
+    // App State Flags
+    AppScene currentScene = SCENE_MAIN_MENU;
+    ControlScheme controlScheme = CONTROL_KEYBOARD;
+    float volume = 0.8f;
+    bool isPaused = false;
+    bool showSettings = false;
 
-        
+    // UI Buttons & Layout Rectangles
+    Rectangle playBtn = { 100, 220, 160, 50 };
+    Rectangle upgradesBtn = { 100, 290, 160, 50 };
+    Rectangle settingsBtn = { gameWidth - 45, 10, 35, 35 };
+    Rectangle backBtn = { 15, 15, 70, 30 };
 
+    Rectangle proceedBtn = { 100, 220, 160, 45 };
+    Rectangle pauseSettingsBtn = { 100, 280, 160, 45 };
+    Rectangle exitBtn = { 100, 340, 160, 45 };
+
+    Rectangle kbBtn = { 50, 200, 120, 40 };
+    Rectangle msBtn = { 190, 200, 120, 40 };
+    Rectangle volBar = { 50, 310, 260, 20 };          // Universal back button
+
+    
     // Spawn first Cactus
     SpawnCactus(hero);
+
+
     
         // GAME LOOP
     while (!WindowShouldClose()) 
@@ -220,365 +320,601 @@ int main()
             rawMouse.y * ((float)gameHeight / GetScreenHeight())
         };
 
-        if(gameState == STATE_PLAYING)
-        {   
-        
-            // INPUT AND MOVEMENT
-            Position nextHeroPos = hero;
-            bool moved = false;
-            bool isDash = false;
-            // Space key held down and shield not active
-            bool canDash = ((IsKeyDown(KEY_SPACE) || IsKeyPressed(KEY_SPACE)) && !IsShieldActive(shieldEndTime)) && (dashCharges > 0); 
-            
-            if (IsKeyPressed(KEY_RIGHT)) {
-                // Hold Space at x=0 -> Dash all the way RIGHT to x=2
-                if (canDash && hero.x == 0) { nextHeroPos.x = 2; moved = true; isDash = true; }
-                else if (hero.x < 2)          { nextHeroPos.x++; moved = true; }
-            }
-            if (IsKeyPressed(KEY_LEFT)) {
-                // Hold Space at x=2 -> Dash all the way LEFT to x=0
-                if (canDash && hero.x == 2) { nextHeroPos.x = 0; moved = true; isDash = true; }
-                else if (hero.x > 0)          { nextHeroPos.x--; moved = true; }
-            }
-            if (IsKeyPressed(KEY_DOWN)) {
-                // Hold Space at y=0 -> Dash all the way DOWN to y=2
-                if (canDash && hero.y == 0) { nextHeroPos.y = 2; moved = true; isDash = true; }
-                else if (hero.y < 2)          { nextHeroPos.y++; moved = true; }
-            }
-            if (IsKeyPressed(KEY_UP)) {
-                // Hold Space at y=2 -> Dash all the way UP to y=0
-                if (canDash && hero.y == 2) { nextHeroPos.y = 0; moved = true; isDash = true; }
-                else if (hero.y > 0)          { nextHeroPos.y--; moved = true; }
-            }
-
-
-                //Respawn cactus if destroed by mushroom
-            if (moved || isDash) 
-            {
-               
-                if (pendingCactusRespawn) 
-                {
-                    movesToCactusRespawn--; // Count down 1 move
-        
-                    // When 2 moves have passed, trigger the spawn and turn off flag
-                    if (movesToCactusRespawn <= 0) 
-                    {
-                        SpawnCactus(hero);
-                        pendingCactusRespawn = false;
-                    }
-                }
-            }
-
-            if (isDash) 
-            {   
-                // Consume a dash charge
-                dashCharges--;
-
-                //Calculates the bounds
-                int startX = std::min(hero.x, nextHeroPos.x);
-                int endX   = std::max(hero.x, nextHeroPos.x);
-                int startY = std::min(hero.y, nextHeroPos.y);
-                int endY   = std::max(hero.y, nextHeroPos.y);
-
-                    //count of killed cactuses
-                int killedCount = 0;
-
-                    //kill all cactuses on the way
-                for (auto it = cactuses.begin(); it != cactuses.end(); ) {
-                    if (it->x >= startX && it->x <= endX && it->y >= startY && it->y <= endY) {
-                        it = cactuses.erase(it);
-                        killedCount++;
-                    } else {
-                        ++it;
-                    }
-                }
-
-                    //Awards and move hero
-                score += killedCount * 500;
-                flowers += killedCount * 1;
-                hero = nextHeroPos; // Move hero across the board
-
-                // Check if hero lands on a mushroom
-                for (auto it = mushrooms.begin(); it != mushrooms.end(); ) 
-                {
-                    if (it->pos == hero) 
-                    {
-                        if (it->type == MSH_HP)
-                        {
-                            hp++;
-                        }
-                        else if (it->type == MSH_SHIELD) 
-                        {
-                            // Give 15 seconds of shield 
-                            shieldEndTime = GetTime() + 7.0f;
-                        }
-                        else if (it->type == MSH_KILL_CACTUS) 
-                        {
-                            // Kill a random cactus if any exist
-                            if (it->type == MSH_KILL_CACTUS) 
-                            {
-                                if (!cactuses.empty()) 
-                                {
-                                    int indexToKill = rand() % cactuses.size();
-                                    cactuses.erase(cactuses.begin() + indexToKill);
-                                    
-                                    //Marks that cactus need to be respawned
-                                    pendingCactusRespawn = true; 
-                                    movesToCactusRespawn = 2;
-                                }
-                            }
-                        }
-                        it = mushrooms.erase(it); // Remove collected mushroom
-                    } else 
-                        {
-                         ++it;
-                        }
-                }
-
-                
-
-                    //deal damage if near cactus, with no shield
-                if (IsNearToCactus(hero) && !IsShieldActive(shieldEndTime)) {
-                hp--;
-                }
-
-
-                //spawn mashroom
-                if (score >= 15000) 
-                {
-                    //15% chance
-                    if ((rand() % 100) < 7) {
-                       // one mashroom limit
-                        if (mushrooms.empty()) {
-                            SpawnMushroom(hero);
-                        }
-                    }
-                }
-            }
-            else if (moved)
-            {   
-                // If the hero moved, restore a dash charge if not full
-                if (dashCharges < MAX_DASH_CHARGES) {
-                dashCharges++;
-                }
-
-                // move hero if the space is NOT blocked 
-                if (!IsCactusAt(nextHeroPos)) 
-                {
-                    hero = nextHeroPos;
-                }
-                else if (IsCactusAt(nextHeroPos))
-                {
-                    //remove cactuse
-                    std::erase(cactuses, nextHeroPos); 
-
-                    score += 500;
-                    flowers += 1;
-                    
-                  
-
-                }
-
-                    if (moved && IsNearToCactus(hero) && !IsShieldActive(shieldEndTime)) 
-                    {
-                        hp--;
-                        
-                    }
-
-                    // Check if hero lands on a mushroom
-                for (auto it = mushrooms.begin(); it != mushrooms.end(); ) 
-                {
-                    if (it->pos == hero) 
-                    {
-                        if (it->type == MSH_HP)
-                        {
-                            hp++;
-                        }
-                        else if (it->type == MSH_SHIELD) 
-                        {
-                            // Give 15 seconds of shield 
-                            shieldEndTime = GetTime() + 7.0f;
-                        }
-                        else if (it->type == MSH_KILL_CACTUS) 
-                            {
-                                if (!cactuses.empty()) 
-                                {
-                                    int indexToKill = rand() % cactuses.size();
-                                    cactuses.erase(cactuses.begin() + indexToKill);
-                                    
-                                    //Marks that cactus need to be respawned
-                                    pendingCactusRespawn = true; 
-                                    movesToCactusRespawn = 2;
-                                }
-                            }
-                        it = mushrooms.erase(it); // Remove collected mushroom
-                    } else 
-                        {
-                         ++it;
-                        }
-                }
-
-                    //spawn mashroom
-                if (score >= 15000) {
-                    //15% chance
-                    if ((rand() % 100) < 5) {
-                       // one mashroom limit
-                        if (mushrooms.empty()) {
-                            SpawnMushroom(hero);
-                        }
-                    }
-                }
-            }
-
-
-                //convert flowers to hp
-            if(flowers >= 3)
-            {
-                hp++;
-                score = score + 250;
-                flowers = flowers - 3;
-            }
-
-                //updates highest score
-            if (score > highestScore) highestScore = score;
-        
-                //Calculates how many cactuses should be on screen
-            int targetCactuses = GetCactusAmount(score);
-
-
-            // Hold off spawning extra cactuses while waiting for the timer
-            if (pendingCactusRespawn) {
-                targetCactuses--;
-            }
-
-            while ((int)cactuses.size() < targetCactuses) 
-            {
-                SpawnCactus(hero);
-            }
-
-            // Fill up to the target amount
-            while ((int)cactuses.size() < targetCactuses) 
-            {
-                SpawnCactus(hero);
-            }
-
-                // end the game
-            if (hp <= 0) 
-            {
-                gameState = STATE_GAME_OVER;
-            }
-        }
-        // GAME OVER INPUT
-        else if (gameState == STATE_GAME_OVER) 
+        switch (currentScene) 
         {
-            // Check if user clicked the left mouse button while hovering over the restart button
-            if (CheckCollisionPointRec(mousePoint, restartBtn)) {
-                if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
-                    ResetGame(hero, score, flowers, hp, dashCharges, shieldEndTime, gameState);
+            case SCENE_MAIN_MENU: 
+            {
+                // 1. If Settings is open over Main Menu, handle Settings input ONLY
+                if (showSettings) {
+                    if (CheckCollisionPointRec(mousePoint, backBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                        showSettings = false; // Close settings overlay
+                    }
+                    if (CheckCollisionPointRec(mousePoint, kbBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                        controlScheme = CONTROL_KEYBOARD;
+                    }
+                    if (CheckCollisionPointRec(mousePoint, msBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                        controlScheme = CONTROL_MOUSE;
+                    }
+                    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mousePoint, volBar)) {
+                        volume = (mousePoint.x - volBar.x) / volBar.width;
+                        if (volume < 0.0f) volume = 0.0f;
+                        if (volume > 1.0f) volume = 1.0f;
+                    }
+                } 
+                // 2. Base Main Menu buttons (ONLY active when Settings is closed)
+                else {
+                    if (CheckCollisionPointRec(mousePoint, playBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                        ResetGame(hero, score, flowers, hp, dashCharges, availableKnives, shieldEndTime, gameState);
+                        currentScene = SCENE_GAME;
+                    }
+                    if (CheckCollisionPointRec(mousePoint, upgradesBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                        currentScene = SCENE_UPGRADES;
+                    }
+                    if (CheckCollisionPointRec(mousePoint, settingsBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                        showSettings = true; // Open settings overlay over Main Menu
+                    }
                 }
+                break;
             }
-        }
 
-        // RENDER
-        BeginTextureMode(target);
-            ClearBackground(GRAY);
-
-            // UPPER MENUE UI
-        // Top left stats
-        DrawText(TextFormat("HI-SCORE: %d", highestScore), 15, 15, 18, GOLD);
-        DrawText(TextFormat("SCORE: %d", score), 15, 40, 18, BLACK);
-        DrawText(TextFormat("HP: %d", hp), 15, 65, 18, RED);
-
-        // Top right - flowers
-        DrawText("FLOWERS", 250, 18, 14, DARKGREEN);
-
-            for (int i = 0; i < 3; i++) 
+            case SCENE_UPGRADES: 
             {
-                int slotX = 250 + (i * 30); // Spacing flowers 45px apart horizontally
-                int slotY = 50;
-
-                // Pick color: Active if collected, Gray if empty
-                Color flowerColor = (i < flowers) ? PINK : DARKGRAY;
-
-                // Draw Flower Icon (Center circle + outer ring/petals)
-                DrawCircle(slotX, slotY, 9, flowerColor);
-                DrawCircleLines(slotX, slotY, 10, WHITE); // White border
+                if (CheckCollisionPointRec(mousePoint, backBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                    currentScene = SCENE_MAIN_MENU;
+                }
+                break;
             }
 
-            // Draw Dash Charges UI under HP
+            case SCENE_GAME: 
+            {
+                // 1. SETTINGS OVERLAY INPUTS (Highest Priority - opens over pause)
+                if (showSettings) {
+                    if (CheckCollisionPointRec(mousePoint, backBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                        showSettings = false; // Closes settings overlay, returning focus to Pause menu
+                    }
+                    if (CheckCollisionPointRec(mousePoint, kbBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) controlScheme = CONTROL_KEYBOARD;
+                    if (CheckCollisionPointRec(mousePoint, msBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) controlScheme = CONTROL_MOUSE;
+                    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mousePoint, volBar)) {
+                        volume = (mousePoint.x - volBar.x) / volBar.width;
+                        if (volume < 0.0f) volume = 0.0f;
+                        if (volume > 1.0f) volume = 1.0f;
+                    }
+                }
+                // 2. PAUSE OVERLAY INPUTS
+                else if (isPaused) {
+                    if (CheckCollisionPointRec(mousePoint, proceedBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                        isPaused = false; // Resumes gameplay
+                    }
+                    if (CheckCollisionPointRec(mousePoint, pauseSettingsBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                        showSettings = true; // Opens settings overlay on top of pause
+                    }
+                    if (CheckCollisionPointRec(mousePoint, exitBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                        isPaused = false;
+                        currentScene = SCENE_MAIN_MENU;
+                    }
+                }
+                // 3. GAMEPLAY INPUTS (Only evaluates when NO overlays are open)
+                else {
+                    // Toggle Pause Menu with Gear Button or ESC Key
+                    if ((CheckCollisionPointRec(mousePoint, settingsBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) || IsKeyPressed(KEY_ESCAPE)) {
+                        isPaused = true;
+                    }
+
+                    if (gameState == STATE_PLAYING) {   
+                                    // INPUT AND MOVEMENT
+                        Position nextHeroPos = hero;
+                        bool moved = false;
+                        bool isDash = false;
+                        // Space key held down and shield not active
+                        bool canDash = ((IsKeyDown(KEY_SPACE) || IsKeyPressed(KEY_SPACE)) && !IsShieldActive(shieldEndTime)) && (dashCharges > 0); 
+                        
+                        if (IsKeyPressed(KEY_D)) {
+                            // Hold Space at x=0 -> Dash all the way RIGHT to x=2
+                            if (canDash && hero.x == 0) { nextHeroPos.x = 2; moved = true; isDash = true; }
+                            else if (hero.x < 2)          { nextHeroPos.x++; moved = true; }
+                        }
+                        if (IsKeyPressed(KEY_A)) {
+                            // Hold Space at x=2 -> Dash all the way LEFT to x=0
+                            if (canDash && hero.x == 2) { nextHeroPos.x = 0; moved = true; isDash = true; }
+                            else if (hero.x > 0)          { nextHeroPos.x--; moved = true; }
+                        }
+                        if (IsKeyPressed(KEY_S)) {
+                            // Hold Space at y=0 -> Dash all the way DOWN to y=2
+                            if (canDash && hero.y == 0) { nextHeroPos.y = 2; moved = true; isDash = true; }
+                            else if (hero.y < 2)          { nextHeroPos.y++; moved = true; }
+                        }
+                        if (IsKeyPressed(KEY_W)) {
+                            // Hold Space at y=2 -> Dash all the way UP to y=0
+                            if (canDash && hero.y == 2) { nextHeroPos.y = 0; moved = true; isDash = true; }
+                            else if (hero.y > 0)          { nextHeroPos.y--; moved = true; }
+                        }
+
+                        // Knife Input
+                        bool threwKnife = false;
+                        Position knifeDir = {0, 0};
+
+                        
+                        // Only allow throwing if player has a knife and hasn't moved this frame
+                        if (availableKnives > 0 && !moved) {
+                            if (IsKeyPressed(KEY_Q)) { knifeDir = {-1, -1}; threwKnife = true; }
+                            if (IsKeyPressed(KEY_E)) { knifeDir = { 1, -1}; threwKnife = true; }
+                            if (IsKeyPressed(KEY_Z)) { knifeDir = {-1,  1}; threwKnife = true; }
+                            if (IsKeyPressed(KEY_C)) { knifeDir = { 1,  1}; threwKnife = true; }
+                        }
+
+                        //Knife trajectory
+                        if (threwKnife) 
+                        {
+                            availableKnives--;
+                            Position currKnifePos = hero;
+
+                            while (true) {
+                                Position nextKnifePos = { currKnifePos.x + knifeDir.x, currKnifePos.y + knifeDir.y };
+
+                                // 1. Check if knife leaves the 3x3 grid (x: 0..2, y: 0..2)
+                                if (nextKnifePos.x < 0 || nextKnifePos.x > 2 || nextKnifePos.y < 0 || nextKnifePos.y > 2) 
+                                {
+                                    // Drops on the last valid grid cell inside the border
+                                    droppedKnives.push_back({currKnifePos});
+                                    break;
+                                }
+
+                                currKnifePos = nextKnifePos;
+
+                                // 2. Check if knife hits a cactus
+                                if (IsCactusAt(currKnifePos)) {
+                                    // Destroy the cactus using C++17 remove-erase pattern
+                                    cactuses.erase(std::remove(cactuses.begin(), cactuses.end(), currKnifePos), cactuses.end());
+                                    
+                                    // Award rewards
+                                    score += 500;
+                                    flowers += 1;
+                                    
+                                    // Knife stops and rests on the cactus's tile
+                                    droppedKnives.push_back({currKnifePos});
+                                    break;
+                                }
+                            }
+                        }
+
+
+                            //Respawn cactus if destroed by mushroom
+                        if (moved || isDash) 
+                        {
+                        
+                            if (pendingCactusRespawn) 
+                            {
+                                movesToCactusRespawn--; // Count down 1 move
+                    
+                                // When 2 moves have passed, trigger the spawn and turn off flag
+                                if (movesToCactusRespawn <= 0) 
+                                {
+                                    SpawnCactus(hero);
+                                    pendingCactusRespawn = false;
+                                }
+                            }
+                        }
+
+                        if (isDash) 
+                        {   
+                            // Consume a dash charge
+                            dashCharges--;
+
+                            //Calculates the bounds
+                            int startX = std::min(hero.x, nextHeroPos.x);
+                            int endX   = std::max(hero.x, nextHeroPos.x);
+                            int startY = std::min(hero.y, nextHeroPos.y);
+                            int endY   = std::max(hero.y, nextHeroPos.y);
+
+                                //count of killed cactuses
+                            int killedCount = 0;
+
+                                //kill all cactuses on the way
+                            for (auto it = cactuses.begin(); it != cactuses.end(); ) {
+                                if (it->x >= startX && it->x <= endX && it->y >= startY && it->y <= endY) {
+                                    it = cactuses.erase(it);
+                                    killedCount++;
+                                } else {
+                                    ++it;
+                                }
+                            }
+
+                                //Awards and move hero
+                            score += killedCount * 500;
+                            flowers += killedCount * 1;
+                            hero = nextHeroPos; // Move hero across the board
+
+                            // Collect knife if dash ENDS directly on the knife cell (and no cactus is on it)
+                            for (auto it = droppedKnives.begin(); it != droppedKnives.end(); ) {
+                                if (it->pos == hero && !IsCactusAt(hero)) {
+                                    availableKnives++;
+                                    it = droppedKnives.erase(it);
+                                } else {
+                                    ++it;
+                                }
+                            }
+
+                            // Check if hero lands on a mushroom
+                            for (auto it = mushrooms.begin(); it != mushrooms.end(); ) 
+                            {
+                                if (it->pos == hero) 
+                                {
+                                    if (it->type == MSH_HP)
+                                    {
+                                        hp++;
+                                    }
+                                    else if (it->type == MSH_SHIELD) 
+                                    {
+                                        // Give 15 seconds of shield 
+                                        shieldEndTime = GetTime() + 7.0f;
+                                    }
+                                    else if (it->type == MSH_KILL_CACTUS) 
+                                    {
+                                        // Kill a random cactus if any exist
+                                        if (it->type == MSH_KILL_CACTUS) 
+                                        {
+                                            if (!cactuses.empty()) 
+                                            {
+                                                int indexToKill = rand() % cactuses.size();
+                                                cactuses.erase(cactuses.begin() + indexToKill);
+                                                
+                                                //Marks that cactus need to be respawned
+                                                pendingCactusRespawn = true; 
+                                                movesToCactusRespawn = 2;
+                                            }
+                                        }
+                                    }
+                                    it = mushrooms.erase(it); // Remove collected mushroom
+                                } else 
+                                    {
+                                    ++it;
+                                    }
+                            }
+
+                            
+
+                                //deal damage if near cactus, with no shield
+                            if (IsNearToCactus(hero) && !IsShieldActive(shieldEndTime)) {
+                            hp--;
+                            }
+
+
+                            //spawn mashroom
+                            if (score >= 15000) 
+                            {
+                                //15% chance
+                                if ((rand() % 100) < 7) {
+                                // one mashroom limit
+                                    if (mushrooms.empty()) {
+                                        SpawnMushroom(hero);
+                                    }
+                                }
+                            }
+                        }
+                        // IF MOVED
+                        else if (moved)
+                        {   
+                            // If the hero moved, restore a dash charge if not full
+                            if (dashCharges < MAX_DASH_CHARGES) {
+                            dashCharges++;
+                            }
+
+                            // move hero if the space is NOT blocked 
+                            if (!IsCactusAt(nextHeroPos)) 
+                            {
+                                hero = nextHeroPos;
+                            }
+                            else if (IsCactusAt(nextHeroPos))
+                            {
+                                //remove cactuse
+                                std::erase(cactuses, nextHeroPos); 
+
+                                score += 500;
+                                flowers += 1;
+                            }
+                            // Collect knife ONLY on a normal step if no cactus is currently on it
+                            for (auto it = droppedKnives.begin(); it != droppedKnives.end(); ) {
+                                if (it->pos == hero && !IsCactusAt(hero)) {
+                                    availableKnives++;
+                                    it = droppedKnives.erase(it);
+                                } else {
+                                    ++it;
+                                }
+                            }
+
+                        
+
+                                // Check if hero lands on a mushroom
+                            for (auto it = mushrooms.begin(); it != mushrooms.end(); ) 
+                            {
+                                if (it->pos == hero) 
+                                {
+                                    if (it->type == MSH_HP)
+                                    {
+                                        hp++;
+                                    }
+                                    else if (it->type == MSH_SHIELD) 
+                                    {
+                                        // Give 15 seconds of shield 
+                                        shieldEndTime = GetTime() + 7.0f;
+                                    }
+                                    else if (it->type == MSH_KILL_CACTUS) 
+                                        {
+                                            if (!cactuses.empty()) 
+                                            {
+                                                int indexToKill = rand() % cactuses.size();
+                                                cactuses.erase(cactuses.begin() + indexToKill);
+                                                
+                                                //Marks that cactus need to be respawned
+                                                pendingCactusRespawn = true; 
+                                                movesToCactusRespawn = 2;
+                                            }
+                                        }
+                                    it = mushrooms.erase(it); // Remove collected mushroom
+                                } else 
+                                    {
+                                    ++it;
+                                    }
+                            }
+
+                                // Take dammage
+                            if (moved && IsNearToCactus(hero) && !IsShieldActive(shieldEndTime))  
+                            {
+                                hp--;
+                                    
+                            }
+
+                                //spawn mashroom
+                            if (score >= 15000) {
+                                //15% chance
+                                if ((rand() % 100) < 5) {
+                                // one mashroom limit
+                                    if (mushrooms.empty()) {
+                                        SpawnMushroom(hero);
+                                    }
+                                }
+                            }
+                        }
+
+
+                            //convert flowers to hp
+                        if(flowers >= 3)
+                        {
+                            hp++;
+                            score = score + 250;
+                            flowers = flowers - 3;
+                        }
+
+                            //updates highest score
+                        if (score > highestScore) {
+                            highestScore = score;
+                            SaveGameData(highestScore, playerUpgrades); // 💾 Automatically saves to disk/browser every time a new record is set!
+                        }
+                    
+                            //Calculates how many cactuses should be on screen
+                        int targetCactuses = GetCactusAmount(score);
+
+
+                        // Hold off spawning extra cactuses while waiting for the timer
+                        if (pendingCactusRespawn) {
+                            targetCactuses--;
+                        }
+
+                        while ((int)cactuses.size() < targetCactuses) 
+                        {
+                            SpawnCactus(hero);
+                        }
+
+                        // Fill up to the target amount
+                        while ((int)cactuses.size() < targetCactuses) 
+                        {
+                            SpawnCactus(hero);
+                        }
+
+                            // end the game
+                        if (hp <= 0) 
+                        {
+                            gameState = STATE_GAME_OVER;
+                        }
+                    
+
+                    }
+                    else if (gameState == STATE_GAME_OVER) {
+                        bool mouseClicked = CheckCollisionPointRec(mousePoint, restartBtn) && 
+                                        (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonReleased(MOUSE_BUTTON_LEFT));
+                        bool keyPressed = IsKeyPressed(KEY_ENTER);
+
+                        if (mouseClicked || keyPressed) {
+                            ResetGame(hero, score, flowers, hp, dashCharges, availableKnives, shieldEndTime, gameState);
+                        }
+                    }
+                }
+                break;
+            }
+        } // End of switch(currentScene)
+
+
+        // LAMBDA FOR RENDER
+        auto DrawGameScene = [&]() {
+            DrawText(TextFormat("HI-SCORE: %d", highestScore), 15, 15, 18, GOLD);
+            DrawText(TextFormat("SCORE: %d", score), 15, 40, 18, BLACK);
+            DrawText(TextFormat("HP: %d", hp), 15, 65, 18, RED);
+
             DrawText("DASH:", 15, 90, 14, DARKBLUE);
-            for (int i = 0; i < MAX_DASH_CHARGES; i++) 
-            {
+            for (int i = 0; i < MAX_DASH_CHARGES; i++) {
                 Color dashColor = (i < dashCharges) ? BLUE : DARKGRAY;
                 DrawRectangle(65 + (i * 18), 92, 14, 10, dashColor);
                 DrawRectangleLines(65 + (i * 18), 92, 14, 10, WHITE);
             }
+            
+            DrawText(TextFormat("KNIVES: %d/%d", availableKnives, maxKnives), 220, 90, 14, BROWN);
 
-                //  3X3 GRID
-                for (int r = 0; r < 3; r++)     
-                {
-                    for (int c = 0; c < 3; c++) 
-                    {
-                        DrawRectangleLines((c * 100)+30, (r * 130) + 160, 100, 130, DARKGRAY);
-                    }
+            DrawText("FLOWERS", 250, 18, 14, DARKGREEN);
+            for (int i = 0; i < 3; i++) {
+                int slotX = 250 + (i * 30);
+                int slotY = 50;
+                Color flowerColor = (i < flowers) ? PINK : DARKGRAY;
+                DrawCircle(slotX, slotY, 9, flowerColor);
+                DrawCircleLines(slotX, slotY, 10, WHITE);
+            }
+
+            for (int r = 0; r < 3; r++) {
+                for (int c = 0; c < 3; c++) {
+                    DrawRectangleLines((c * 100)+30, (r * 130) + 160, 100, 130, DARKGRAY);
                 }
+            }
 
-            //  Draw Cactuses 
             for (const auto& cactus : cactuses) {
-                int cactusPixelX = cactus.x * 100 + 45;  // Centered inside 100 width
-                int cactusPixelY = cactus.y * 130 + 185;  // Centered inside 130 height
+                int cactusPixelX = cactus.x * 100 + 45;
+                int cactusPixelY = cactus.y * 130 + 185;
                 DrawRectangle(cactusPixelX, cactusPixelY, 70, 80, DARKGREEN);
             }
 
-            //  Draw Hero 
+            for (const auto& k : droppedKnives) {
+                int kX = k.pos.x * 100 + 72;
+                int kY = k.pos.y * 130 + 215;
+                DrawRectangle(kX, kY, 16, 20, BROWN);
+                DrawTriangle({ (float)kX, (float)kY }, { (float)kX + 16, (float)kY }, { (float)kX + 8, (float)kY - 12 }, LIGHTGRAY);
+            }
+
             int heroPixelX = hero.x * 100 + 80;
             int heroPixelY = hero.y * 130 + 225;
             DrawCircle(heroPixelX, heroPixelY, 22, BLUE);
 
-            
-                //Draw Mashrooms
             for (const auto& m : mushrooms) {
                 int mPixelX = m.pos.x * 100 + 80;
                 int mPixelY = m.pos.y * 130 + 225;
-
-                Color mColor = PURPLE; // Default
+                Color mColor = PURPLE;
                 if (m.type == MSH_HP) mColor = RED;
                 else if (m.type == MSH_SHIELD) mColor = SKYBLUE;
                 else if (m.type == MSH_KILL_CACTUS) mColor = ORANGE;
 
-                // Draw mushroom cap
                 DrawCircle(mPixelX, mPixelY, 14, mColor);
             }
 
-            // Optional: Draw a shield aura around the hero if active!
-            if (IsShieldActive(shieldEndTime)) 
-            {
+            if (IsShieldActive(shieldEndTime)) {
                 DrawCircleLines(heroPixelX, heroPixelY, 28, SKYBLUE);
             }
 
-            //  Draw Game Over Screen & Restart Button
             if (gameState == STATE_GAME_OVER) {
-                // Darken the background
-                DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(BLACK, 0.7f));
-
-                // Game Over Title
+                DrawRectangle(0, 0, gameWidth, gameHeight, Fade(BLACK, 0.7f));
                 DrawText("GAME OVER", 60, 260, 36, RED);
 
-                // Highlight button color when hovering with mouse
-                Vector2 mousePoint = GetMousePosition();
                 Color btnColor = DARKGRAY;
-                if (CheckCollisionPointRec(mousePoint, restartBtn)) {
-                    btnColor = LIGHTGRAY;
-                }
+                if (CheckCollisionPointRec(mousePoint, restartBtn)) btnColor = LIGHTGRAY;
 
-                // Draw button shape & border
                 DrawRectangleRec(restartBtn, btnColor);
                 DrawRectangleLinesEx(restartBtn, 3, WHITE);
-                
-                // Draw button text
                 DrawText("RESTART", restartBtn.x + 35, restartBtn.y + 18, 28, WHITE);
             }
+        };
 
+        
+        // RENDER
+        BeginTextureMode(target);
+            ClearBackground(GRAY);
+
+            switch (currentScene) 
+            {
+                case SCENE_MAIN_MENU: 
+                {
+                    // 1. Draw Base Main Menu UI
+                    DrawText("CACTUS GRID", 50, 100, 32, DARKGREEN);
+                    
+                    DrawRectangleRec(playBtn, DARKBLUE);
+                    DrawText("PLAY", playBtn.x + 50, playBtn.y + 12, 24, WHITE);
+
+                    DrawRectangleRec(upgradesBtn, DARKGREEN);
+                    DrawText("SHOP", upgradesBtn.x + 48, upgradesBtn.y + 12, 24, WHITE);
+
+                    DrawRectangleRec(settingsBtn, DARKGRAY);
+                    DrawText("*", settingsBtn.x + 10, settingsBtn.y + 5, 30, WHITE);
+
+                    // 2. Draw Settings Overlay on top of Main Menu if open
+                    if (showSettings) {
+                        // Darken the background menu
+                        DrawRectangle(0, 0, gameWidth, gameHeight, Fade(BLACK, 0.85f));
+
+                        // Back button & Title
+                        DrawRectangleRec(backBtn, DARKGRAY);
+                        DrawText("< BACK", backBtn.x + 8, backBtn.y + 6, 16, WHITE);
+                        DrawText("SETTINGS", 120, 20, 24, WHITE);
+                        
+                        // Control scheme options
+                        DrawText("Movement Scheme:", 50, 170, 18, WHITE);
+                        DrawRectangleRec(kbBtn, controlScheme == CONTROL_KEYBOARD ? BLUE : DARKGRAY);
+                        DrawText("KEYBOARD", kbBtn.x + 12, kbBtn.y + 12, 14, WHITE);
+                        
+                        DrawRectangleRec(msBtn, controlScheme == CONTROL_MOUSE ? BLUE : DARKGRAY);
+                        DrawText("MOUSE", msBtn.x + 30, msBtn.y + 12, 14, WHITE);
+
+                        // Volume bar
+                        DrawText(TextFormat("Volume: %d%%", (int)(volume * 100)), 50, 280, 18, WHITE);
+                        DrawRectangleRec(volBar, LIGHTGRAY);
+                        DrawRectangle(volBar.x, volBar.y, volBar.width * volume, volBar.height, BLUE);
+                        DrawRectangleLinesEx(volBar, 2, WHITE);
+                    }
+                    break;
+                }
+                
+
+                case SCENE_GAME: 
+                {
+                    // 1. ALWAYS execute the drawing lambda first to render game world
+                    DrawGameScene();
+
+                    // Gear Icon (Always visible during gameplay)
+                    DrawRectangleRec(settingsBtn, DARKGRAY);
+                    DrawText("*", settingsBtn.x + 10, settingsBtn.y + 5, 30, WHITE);
+
+                    // 2. Render Settings Overlay ON TOP of everything if open
+                    if (showSettings) {
+                        DrawRectangle(0, 0, gameWidth, gameHeight, Fade(BLACK, 0.85f));
+                        DrawRectangleRec(backBtn, DARKGRAY);
+                        DrawText("< BACK", backBtn.x + 8, backBtn.y + 6, 16, WHITE);
+                        DrawText("SETTINGS", 120, 20, 24, WHITE);
+
+                        DrawText("Movement Scheme:", 50, 170, 18, WHITE);
+                        DrawRectangleRec(kbBtn, controlScheme == CONTROL_KEYBOARD ? BLUE : DARKGRAY);
+                        DrawText("KEYBOARD", kbBtn.x + 12, kbBtn.y + 12, 14, WHITE);
+                        DrawRectangleRec(msBtn, controlScheme == CONTROL_MOUSE ? BLUE : DARKGRAY);
+                        DrawText("MOUSE", msBtn.x + 30, msBtn.y + 12, 14, WHITE);
+
+                        DrawText(TextFormat("Volume: %d%%", (int)(volume * 100)), 50, 280, 18, WHITE);
+                        DrawRectangleRec(volBar, LIGHTGRAY);
+                        DrawRectangle(volBar.x, volBar.y, volBar.width * volume, volBar.height, BLUE);
+                        DrawRectangleLinesEx(volBar, 2, WHITE);
+                    }
+                    // 3. Render Pause Overlay ON TOP of game if paused
+                    else if (isPaused) {
+                        DrawRectangle(0, 0, gameWidth, gameHeight, Fade(BLACK, 0.6f));
+                        DrawText("PAUSED", 115, 140, 32, WHITE);
+
+                        DrawRectangleRec(proceedBtn, DARKBLUE);
+                        DrawText("PROCEED", proceedBtn.x + 30, proceedBtn.y + 12, 20, WHITE);
+
+                        DrawRectangleRec(pauseSettingsBtn, DARKGRAY);
+                        DrawText("SETTINGS", pauseSettingsBtn.x + 25, pauseSettingsBtn.y + 12, 20, WHITE);
+
+                        DrawRectangleRec(exitBtn, RED);
+                        DrawText("EXIT TO MENU", exitBtn.x + 10, exitBtn.y + 12, 18, WHITE);
+                    }
+                    break;
+                }
+                
+                case SCENE_UPGRADES: 
+                {
+                    DrawRectangleRec(backBtn, DARKGRAY);
+                    DrawText("< BACK", backBtn.x + 8, backBtn.y + 6, 16, WHITE);
+                    DrawText("UPGRADES SHOP", 95, 20, 22, GOLD);
+                    
+                    // Knife upgrade UI (from previous step) goes here
+                    break;
+                }
+
+                
+            }
+            
         EndTextureMode();
 
         BeginDrawing();
