@@ -3,6 +3,27 @@
 #include <cstdlib>
 #include <ctime>
 #include <algorithm>
+#include <fstream>
+
+// Universal fallback helper functions for saving persistent data
+void SaveStorageValue(int position, int value) {
+    std::ofstream outFile("save.data", std::ios::binary | std::ios::in | std::ios::out);
+    if (!outFile.is_open()) {
+        outFile.open("save.data", std::ios::binary | std::ios::trunc);
+    }
+    outFile.seekp(position * sizeof(int));
+    outFile.write(reinterpret_cast<const char*>(&value), sizeof(int));
+}
+
+int LoadStorageValue(int position) {
+    std::ifstream inFile("save.data", std::ios::binary);
+    if (!inFile.is_open()) return 0; // Returns 0 if file doesn't exist yet
+    
+    inFile.seekg(position * sizeof(int));
+    int value = 0;
+    inFile.read(reinterpret_cast<char*>(&value), sizeof(int));
+    return inFile.gcount() > 0 ? value : 0;
+}
 
 // struct to represent a position on the 3x3 grid
 struct Position {
@@ -23,6 +44,12 @@ enum MushroomType {
     MSH_SHIELD,      // Shield for 15 seconds
     MSH_KILL_CACTUS  // Kills a random cactus
 };
+
+// Storage Positions for Save Data
+typedef enum {
+    STORAGE_POS_HISCORE = 0,
+    STORAGE_POS_FLOWERS = 1
+} StoragePosition;
 
 enum StorageKey {
     STORAGE_HIGHEST_SCORE = 0,
@@ -138,8 +165,8 @@ bool IsShieldActive(float shieldEndTime) {
 
 // how many cactuses should be on screen based on the score
 int GetCactusAmount(int score) {
-    if (score >= 30000) return 3;
-    if (score >= 5000)  return 2;
+    if (score >= 55000) return 3;
+    if (score >= 10000)  return 2;
     return 1;
 }
 
@@ -192,12 +219,50 @@ void SpawnMushroom(Position heroPos) {
     }
 }
 
-// reset game after the game over
-void ResetGame(Position& hero, int& score, int& flowers, int& hp, int& dashCharges, int& availableKnives, float& shieldEndTime, GameState& state) {
+// General cost function based on target level (Lvl 1 = 500f, Lvl 2 = 1000f, etc.)
+int GetStandardUpgradeCost(int currentLvl) {
+    int baseCost = 500;
+    float multiplier = 1.6f;
+    return static_cast<int>(baseCost * std::pow(multiplier, currentLvl));
+}
+
+// Stat Lookups based on upgrade progression levels
+float GetShieldDuration(int lvl) {
+    const float durations[] = { 3.0f, 5.0f, 7.0f, 9.0f, 10.0f, 13.0f, 15.0f };
+    return durations[std::min(lvl, 6)];
+}
+
+int GetMaxPlayerHp(int lvl) {
+    const int hpValues[] = { 3, 4, 5, 6, 7, 8, 9, 10, 15 };
+    return hpValues[std::min(lvl, 8)];
+}
+
+int GetMushroomHpBonus(int lvl) {
+    return std::min(lvl + 1, 10);
+}
+
+int GetMushroomCactusKills(int lvl) {
+    return std::min(lvl + 1, 3);
+}
+
+int GetMushroomSpawnChance(int lvl) {
+    const int chances[] = { 3, 5, 7, 10, 12, 15, 17, 20, 25 };
+    return chances[std::min(lvl, 8)];
+}
+
+int GetKillMushroomCost(int lvl) {
+    if (lvl == 0) return 2500;
+    if (lvl == 1) return 4500;
+    return 0; // Max level reached
+}
+
+void ResetGame(Position& hero, int& score, int& flowers, int& hp, int& dashCharges, 
+               int& availableKnives, int& maxKnives, float& shieldEndTime, GameState& state, 
+               const PlayerUpgrades& upgrades) {
     hero = {1, 1};
     score = 0;
     flowers = 0;
-    hp = 5;
+    hp = GetMaxPlayerHp(upgrades.playerHpLvl); // Starts run with upgraded HP
     shieldEndTime = 0.0f;
     
     cactuses.clear();
@@ -205,7 +270,8 @@ void ResetGame(Position& hero, int& score, int& flowers, int& hp, int& dashCharg
     droppedKnives.clear();
 
     dashCharges = 3;
-    availableKnives = 1;
+    maxKnives = (upgrades.knifeLvl > 0) ? 2 : 1; // Unlocks 2 knives if purchased
+    availableKnives = maxKnives;
 
     SpawnCactus(hero);
     state = STATE_PLAYING;
@@ -238,10 +304,7 @@ void LoadGameData(int& highestScore, PlayerUpgrades& upgrades) {
     }
 }
 
-// Returns the flower cost to upgrade a feature
-int GetUpgradeCost(int currentLevel) {
-    return (currentLevel + 1) * 30; // e.g., Level 0->1 costs 30 flowers, 1->2 costs 60 flowers
-}
+ 
 
 
 int main() 
@@ -264,9 +327,7 @@ int main()
     RenderTexture2D target = LoadRenderTexture(gameWidth, gameHeight);
     SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
 
-    // Restart Button size
-    Rectangle restartBtn = { 80, 360, 200, 60 };
-
+    
     // Hero initial position (Center)
     Position hero = {1, 1};
     int score = 0;
@@ -281,6 +342,9 @@ int main()
     float shieldEndTime = 0; 
     //chack if we need new cactus
     bool pendingCactusRespawn = false; 
+
+    // Persistent Saved Data
+    int totalFlowers = LoadStorageValue(STORAGE_POS_FLOWERS);
 
     // App State Flags
     AppScene currentScene = SCENE_MAIN_MENU;
@@ -303,6 +367,17 @@ int main()
     Rectangle msBtn = { 190, 200, 120, 40 };
     Rectangle volBar = { 50, 310, 260, 20 };          // Universal back button
 
+    // Shop UI Button Layouts
+    Rectangle btnPlayerHp  = { 20, 90,  320, 40 };
+    Rectangle btnShield    = { 20, 140, 320, 40 };
+    Rectangle btnMushHp    = { 20, 190, 320, 40 };
+    Rectangle btnSpawnRate = { 20, 240, 320, 40 };
+    Rectangle btnMushKill  = { 20, 290, 320, 40 };
+    Rectangle btnKnives    = { 20, 340, 320, 40 };
+
+    // Game Over UI Buttons
+    Rectangle restartBtn = { 80, 360, 200, 50 };
+    Rectangle exitGameBtn = { 80, 420, 200, 50 }; // Placed directly below restart
     
     // Spawn first Cactus
     SpawnCactus(hero);
@@ -344,7 +419,7 @@ int main()
                 // 2. Base Main Menu buttons (ONLY active when Settings is closed)
                 else {
                     if (CheckCollisionPointRec(mousePoint, playBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                        ResetGame(hero, score, flowers, hp, dashCharges, availableKnives, shieldEndTime, gameState);
+                        ResetGame(hero, score, flowers, hp, dashCharges, availableKnives, maxKnives, shieldEndTime, gameState, playerUpgrades);
                         currentScene = SCENE_GAME;
                     }
                     if (CheckCollisionPointRec(mousePoint, upgradesBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -361,6 +436,72 @@ int main()
             {
                 if (CheckCollisionPointRec(mousePoint, backBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                     currentScene = SCENE_MAIN_MENU;
+                }
+
+                // Shield Upgrade Click
+                if (CheckCollisionPointRec(mousePoint, btnShield) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                    int cost = GetStandardUpgradeCost(playerUpgrades.shieldLvl);
+                    if (playerUpgrades.shieldLvl < 6 && totalFlowers >= cost) {
+                        totalFlowers -= cost;
+                        playerUpgrades.shieldLvl++;
+                        SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
+                        SaveGameData(highestScore, playerUpgrades);
+                    }
+                }
+
+                // Max HP Upgrade Click
+                if (CheckCollisionPointRec(mousePoint, btnPlayerHp) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                    int cost = GetStandardUpgradeCost(playerUpgrades.playerHpLvl);
+                    if (playerUpgrades.playerHpLvl < 8 && totalFlowers >= cost) {
+                        totalFlowers -= cost;
+                        playerUpgrades.playerHpLvl++;
+                        SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
+                        SaveGameData(highestScore, playerUpgrades);
+                    }
+                }
+
+                // Mushroom HP Upgrade Click
+                if (CheckCollisionPointRec(mousePoint, btnMushHp) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                    int cost = GetStandardUpgradeCost(playerUpgrades.hpMushroomLvl);
+                    if (playerUpgrades.hpMushroomLvl < 9 && totalFlowers >= cost) {
+                        totalFlowers -= cost;
+                        playerUpgrades.hpMushroomLvl++;
+                        SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
+                        SaveGameData(highestScore, playerUpgrades);
+                    }
+                }
+
+                // Mushroom Cactus Kill Upgrade Click
+                if (CheckCollisionPointRec(mousePoint, btnMushKill) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                    int cost = GetKillMushroomCost(playerUpgrades.killMushroomLvl);
+                    if (playerUpgrades.killMushroomLvl < 2 && totalFlowers >= cost) {
+                        totalFlowers -= cost;
+                        playerUpgrades.killMushroomLvl++;
+                        SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
+                        SaveGameData(highestScore, playerUpgrades);
+                    }
+                }
+
+                // Spawn Rate Upgrade Click
+                if (CheckCollisionPointRec(mousePoint, btnSpawnRate) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                    int cost = GetStandardUpgradeCost(playerUpgrades.mushSpawnRateLvl);
+                    if (playerUpgrades.mushSpawnRateLvl < 8 && totalFlowers >= cost) {
+                        totalFlowers -= cost;
+                        playerUpgrades.mushSpawnRateLvl++;
+                        SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
+                        SaveGameData(highestScore, playerUpgrades);
+                    }
+                }
+
+                // 2 Knives Upgrade Click
+                if (CheckCollisionPointRec(mousePoint, btnKnives) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                    int cost = 5000;
+                    if (playerUpgrades.knifeLvl < 1 && totalFlowers >= cost) {
+                        totalFlowers -= cost;
+                        playerUpgrades.knifeLvl = 1;
+                        SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
+                        SaveGameData(highestScore, playerUpgrades);
+                    }
                 }
                 break;
             }
@@ -469,6 +610,8 @@ int main()
                                     // Award rewards
                                     score += 500;
                                     flowers += 1;
+                                    totalFlowers += 1; 
+                                    SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
                                     
                                     // Knife stops and rests on the cactus's tile
                                     droppedKnives.push_back({currKnifePos});
@@ -519,9 +662,11 @@ int main()
                                 }
                             }
 
-                                //Awards and move hero
+                             // Awards and move hero
                             score += killedCount * 500;
                             flowers += killedCount * 1;
+                            totalFlowers += killedCount * 1;
+                            SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
                             hero = nextHeroPos; // Move hero across the board
 
                             // Collect knife if dash ENDS directly on the knife cell (and no cactus is on it)
@@ -534,43 +679,37 @@ int main()
                                 }
                             }
 
-                            // Check if hero lands on a mushroom
+                            // Check if hero lands on a mushroom 
                             for (auto it = mushrooms.begin(); it != mushrooms.end(); ) 
                             {
                                 if (it->pos == hero) 
                                 {
-                                    if (it->type == MSH_HP)
+                                    // --- REPLACE FROM HERE ---
+                                    if (it->type == MSH_HP) 
                                     {
-                                        hp++;
+                                        hp += GetMushroomHpBonus(playerUpgrades.hpMushroomLvl);
                                     }
                                     else if (it->type == MSH_SHIELD) 
                                     {
-                                        // Give 15 seconds of shield 
-                                        shieldEndTime = GetTime() + 7.0f;
+                                        shieldEndTime = GetTime() + GetShieldDuration(playerUpgrades.shieldLvl);
                                     }
                                     else if (it->type == MSH_KILL_CACTUS) 
                                     {
-                                        // Kill a random cactus if any exist
-                                        if (it->type == MSH_KILL_CACTUS) 
-                                        {
-                                            if (!cactuses.empty()) 
-                                            {
-                                                int indexToKill = rand() % cactuses.size();
-                                                cactuses.erase(cactuses.begin() + indexToKill);
-                                                
-                                                //Marks that cactus need to be respawned
-                                                pendingCactusRespawn = true; 
-                                                movesToCactusRespawn = 2;
-                                            }
+                                        int killsToPerform = GetMushroomCactusKills(playerUpgrades.killMushroomLvl);
+                                        for (int k = 0; k < killsToPerform && !cactuses.empty(); k++) {
+                                            int indexToKill = rand() % cactuses.size();
+                                            cactuses.erase(cactuses.begin() + indexToKill);
                                         }
+                                        pendingCactusRespawn = true; 
+                                        movesToCactusRespawn = 2;
                                     }
-                                    it = mushrooms.erase(it); // Remove collected mushroom
-                                } else 
-                                    {
-                                    ++it;
-                                    }
-                            }
+                                    // --- REPLACE UNTIL HERE ---
 
+                                    it = mushrooms.erase(it); // Remove collected mushroom
+                                } else {
+                                    ++it;
+                                }
+                            }
                             
 
                                 //deal damage if near cactus, with no shield
@@ -579,15 +718,11 @@ int main()
                             }
 
 
-                            //spawn mashroom
-                            if (score >= 15000) 
-                            {
-                                //15% chance
-                                if ((rand() % 100) < 7) {
-                                // one mashroom limit
-                                    if (mushrooms.empty()) {
-                                        SpawnMushroom(hero);
-                                    }
+                            // Spawn mashroom
+                            if (score >= 15000 && mushrooms.empty()) {
+                                int chance = GetMushroomSpawnChance(playerUpgrades.mushSpawnRateLvl);
+                                if ((rand() % 100) < chance) {
+                                    SpawnMushroom(hero);
                                 }
                             }
                         }
@@ -607,10 +742,12 @@ int main()
                             else if (IsCactusAt(nextHeroPos))
                             {
                                 //remove cactuse
-                                std::erase(cactuses, nextHeroPos); 
+                            cactuses.erase(std::remove(cactuses.begin(), cactuses.end(), nextHeroPos), cactuses.end()); 
 
                                 score += 500;
                                 flowers += 1;
+                                totalFlowers += 1;
+                                SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
                             }
                             // Collect knife ONLY on a normal step if no cactus is currently on it
                             for (auto it = droppedKnives.begin(); it != droppedKnives.end(); ) {
@@ -624,39 +761,37 @@ int main()
 
                         
 
-                                // Check if hero lands on a mushroom
+                            // Check if hero lands on a mushroom during DASH
                             for (auto it = mushrooms.begin(); it != mushrooms.end(); ) 
                             {
                                 if (it->pos == hero) 
                                 {
-                                    if (it->type == MSH_HP)
+                                    // --- REPLACE FROM HERE ---
+                                    if (it->type == MSH_HP) 
                                     {
-                                        hp++;
+                                        hp += GetMushroomHpBonus(playerUpgrades.hpMushroomLvl);
                                     }
                                     else if (it->type == MSH_SHIELD) 
                                     {
-                                        // Give 15 seconds of shield 
-                                        shieldEndTime = GetTime() + 7.0f;
+                                        shieldEndTime = GetTime() + GetShieldDuration(playerUpgrades.shieldLvl);
                                     }
                                     else if (it->type == MSH_KILL_CACTUS) 
-                                        {
-                                            if (!cactuses.empty()) 
-                                            {
-                                                int indexToKill = rand() % cactuses.size();
-                                                cactuses.erase(cactuses.begin() + indexToKill);
-                                                
-                                                //Marks that cactus need to be respawned
-                                                pendingCactusRespawn = true; 
-                                                movesToCactusRespawn = 2;
-                                            }
-                                        }
-                                    it = mushrooms.erase(it); // Remove collected mushroom
-                                } else 
                                     {
-                                    ++it;
+                                        int killsToPerform = GetMushroomCactusKills(playerUpgrades.killMushroomLvl);
+                                        for (int k = 0; k < killsToPerform && !cactuses.empty(); k++) {
+                                            int indexToKill = rand() % cactuses.size();
+                                            cactuses.erase(cactuses.begin() + indexToKill);
+                                        }
+                                        pendingCactusRespawn = true; 
+                                        movesToCactusRespawn = 2;
                                     }
+                                    // --- REPLACE UNTIL HERE ---
+ 
+                                    it = mushrooms.erase(it); // Remove collected mushroom
+                                } else {
+                                    ++it;
+                                }
                             }
-
                                 // Take dammage
                             if (moved && IsNearToCactus(hero) && !IsShieldActive(shieldEndTime))  
                             {
@@ -665,13 +800,10 @@ int main()
                             }
 
                                 //spawn mashroom
-                            if (score >= 15000) {
-                                //15% chance
-                                if ((rand() % 100) < 5) {
-                                // one mashroom limit
-                                    if (mushrooms.empty()) {
-                                        SpawnMushroom(hero);
-                                    }
+                            if (score >= 15000 && mushrooms.empty()) {
+                                int chance = GetMushroomSpawnChance(playerUpgrades.mushSpawnRateLvl);
+                                if ((rand() % 100) < chance) {
+                                    SpawnMushroom(hero);
                                 }
                             }
                         }
@@ -688,7 +820,7 @@ int main()
                             //updates highest score
                         if (score > highestScore) {
                             highestScore = score;
-                            SaveGameData(highestScore, playerUpgrades); // 💾 Automatically saves to disk/browser every time a new record is set!
+                            SaveGameData(highestScore, playerUpgrades); 
                         }
                     
                             //Calculates how many cactuses should be on screen
@@ -700,10 +832,7 @@ int main()
                             targetCactuses--;
                         }
 
-                        while ((int)cactuses.size() < targetCactuses) 
-                        {
-                            SpawnCactus(hero);
-                        }
+                        
 
                         // Fill up to the target amount
                         while ((int)cactuses.size() < targetCactuses) 
@@ -720,14 +849,21 @@ int main()
 
                     }
                     else if (gameState == STATE_GAME_OVER) {
-                        bool mouseClicked = CheckCollisionPointRec(mousePoint, restartBtn) && 
-                                        (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonReleased(MOUSE_BUTTON_LEFT));
-                        bool keyPressed = IsKeyPressed(KEY_ENTER);
+                        bool mouseRestartClicked = CheckCollisionPointRec(mousePoint, restartBtn) && 
+                                                (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonReleased(MOUSE_BUTTON_LEFT));
+                        bool keyRestartPressed = IsKeyPressed(KEY_ENTER);
 
-                        if (mouseClicked || keyPressed) {
-                            ResetGame(hero, score, flowers, hp, dashCharges, availableKnives, shieldEndTime, gameState);
+                        bool mouseExitClicked = CheckCollisionPointRec(mousePoint, exitGameBtn) && 
+                                                (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonReleased(MOUSE_BUTTON_LEFT));
+
+                        if (mouseRestartClicked || keyRestartPressed) {
+                            ResetGame(hero, score, flowers, hp, dashCharges, availableKnives, maxKnives, shieldEndTime, gameState, playerUpgrades);
+                        }
+                        else if (mouseExitClicked) {
+                            currentScene = SCENE_MAIN_MENU;
                         }
                     }
+                    
                 }
                 break;
             }
@@ -797,16 +933,21 @@ int main()
             }
 
             if (gameState == STATE_GAME_OVER) {
-                DrawRectangle(0, 0, gameWidth, gameHeight, Fade(BLACK, 0.7f));
-                DrawText("GAME OVER", 60, 260, 36, RED);
+            DrawRectangle(0, 0, gameWidth, gameHeight, Fade(BLACK, 0.7f));
+            DrawText("GAME OVER", 60, 260, 36, RED);
 
-                Color btnColor = DARKGRAY;
-                if (CheckCollisionPointRec(mousePoint, restartBtn)) btnColor = LIGHTGRAY;
+            // 1. Restart Button
+            Color restartBtnColor = CheckCollisionPointRec(mousePoint, restartBtn) ? LIGHTGRAY : DARKGRAY;
+            DrawRectangleRec(restartBtn, restartBtnColor);
+            DrawRectangleLinesEx(restartBtn, 3, WHITE);
+            DrawText("RESTART", restartBtn.x + 40, restartBtn.y + 14, 24, WHITE);
 
-                DrawRectangleRec(restartBtn, btnColor);
-                DrawRectangleLinesEx(restartBtn, 3, WHITE);
-                DrawText("RESTART", restartBtn.x + 35, restartBtn.y + 18, 28, WHITE);
-            }
+            // 2. Red Exit to Menu Button (matching Pause Menu styling)
+            Color exitBtnColor = CheckCollisionPointRec(mousePoint, exitGameBtn) ? MAROON : RED;
+            DrawRectangleRec(exitGameBtn, exitBtnColor);
+            DrawRectangleLinesEx(exitGameBtn, 3, WHITE);
+            DrawText("EXIT TO MENU", exitGameBtn.x + 18, exitGameBtn.y + 16, 18, WHITE);
+        }
         };
 
         
@@ -829,6 +970,11 @@ int main()
 
                     DrawRectangleRec(settingsBtn, DARKGRAY);
                     DrawText("*", settingsBtn.x + 10, settingsBtn.y + 5, 30, WHITE);
+
+                    //Draw Flowers count
+                    DrawText("CACTUS GRID", 50, 100, 32, DARKGREEN);
+                    // Render lifetime bank balance at the top left of the menu
+                    DrawText(TextFormat("FLOWERS: %d", totalFlowers), 15, 15, 18, PINK);
 
                     // 2. Draw Settings Overlay on top of Main Menu if open
                     if (showSettings) {
@@ -856,16 +1002,84 @@ int main()
                     }
                     break;
                 }
-                
+
+                case SCENE_UPGRADES: 
+                {
+                    DrawRectangleRec(backBtn, DARKGRAY);
+                    DrawText("< BACK", backBtn.x + 8, backBtn.y + 6, 16, WHITE);
+                    DrawText("UPGRADES SHOP", 95, 20, 22, GOLD);
+                    DrawText(TextFormat("FLOWERS: %d", totalFlowers), 120, 55, 18, PINK);
+
+                    // Lambda helper for rendering uniform shop rows with transition format
+                    auto DrawUpgradeRow = [&](Rectangle rec, const char* label, std::string val, int cost, bool maxed) {
+                        DrawRectangleRec(rec, maxed ? DARKGRAY : (totalFlowers >= cost ? DARKGREEN : GRAY));
+                        DrawRectangleLinesEx(rec, 2, WHITE);
+                        DrawText(label, rec.x + 8, rec.y + 12, 13, WHITE);
+                        
+                        // Displays current -> next when upgrading, or just current when maxed
+                        DrawText(val.c_str(), rec.x + 115, rec.y + 12, 13, YELLOW);
+
+                        if (maxed) {
+                            DrawText("MAX", rec.x + 265, rec.y + 12, 14, RED);
+                        } else {
+                            DrawText(TextFormat("%df", cost), rec.x + 250, rec.y + 12, 13, PINK);
+                        }
+                    };
+
+                    
+                    // 1. Max HP
+                    bool hpMax = playerUpgrades.playerHpLvl >= 8;
+                    std::string hpTxt = hpMax 
+                        ? TextFormat("%d HP", GetMaxPlayerHp(playerUpgrades.playerHpLvl))
+                        : TextFormat("%d -> %d HP", GetMaxPlayerHp(playerUpgrades.playerHpLvl), GetMaxPlayerHp(playerUpgrades.playerHpLvl + 1));
+                    DrawUpgradeRow(btnPlayerHp, "Max HP", hpTxt, GetStandardUpgradeCost(playerUpgrades.playerHpLvl), hpMax);
+
+                    // 2. Shield Duration
+                    bool shieldMax = playerUpgrades.shieldLvl >= 6;
+                    std::string shieldTxt = shieldMax 
+                        ? TextFormat("%.0fs", GetShieldDuration(playerUpgrades.shieldLvl))
+                        : TextFormat("%.0fs -> %.0fs", GetShieldDuration(playerUpgrades.shieldLvl), GetShieldDuration(playerUpgrades.shieldLvl + 1));
+                    DrawUpgradeRow(btnShield, "Shield Dur.", shieldTxt, GetStandardUpgradeCost(playerUpgrades.shieldLvl), shieldMax);
+
+
+                    // 3. Mushroom HP
+                    bool mushHpMax = playerUpgrades.hpMushroomLvl >= 9;
+                    std::string mushHpTxt = mushHpMax 
+                        ? TextFormat("+%d HP", GetMushroomHpBonus(playerUpgrades.hpMushroomLvl))
+                        : TextFormat("+%d -> +%d", GetMushroomHpBonus(playerUpgrades.hpMushroomLvl), GetMushroomHpBonus(playerUpgrades.hpMushroomLvl + 1));
+                    DrawUpgradeRow(btnMushHp, "Mush HP", mushHpTxt, GetStandardUpgradeCost(playerUpgrades.hpMushroomLvl), mushHpMax);
+
+                    // 4. Mushroom Kills
+                    bool mushKillMax = playerUpgrades.killMushroomLvl >= 2;
+                    std::string mushKillTxt = mushKillMax 
+                        ? TextFormat("%d Cacti", GetMushroomCactusKills(playerUpgrades.killMushroomLvl))
+                        : TextFormat("%d -> %d", GetMushroomCactusKills(playerUpgrades.killMushroomLvl), GetMushroomCactusKills(playerUpgrades.killMushroomLvl + 1));
+                    DrawUpgradeRow(btnMushKill, "Mush Kills", mushKillTxt, GetKillMushroomCost(playerUpgrades.killMushroomLvl), mushKillMax);
+
+                    // 5. Mushroom Spawn Rate
+                    bool spawnMax = playerUpgrades.mushSpawnRateLvl >= 8;
+                    std::string spawnTxt = spawnMax 
+                        ? TextFormat("%d%%", GetMushroomSpawnChance(playerUpgrades.mushSpawnRateLvl))
+                        : TextFormat("%d%% -> %d%%", GetMushroomSpawnChance(playerUpgrades.mushSpawnRateLvl), GetMushroomSpawnChance(playerUpgrades.mushSpawnRateLvl + 1));
+                    DrawUpgradeRow(btnSpawnRate, "Mush Spawn", spawnTxt, GetStandardUpgradeCost(playerUpgrades.mushSpawnRateLvl), spawnMax);
+
+                    // 6. 2 Knives
+                    bool knifeMax = playerUpgrades.knifeLvl >= 1;
+                    std::string knifeTxt = knifeMax ? "Knives" : "1 -> 2";
+                    DrawUpgradeRow(btnKnives, "Knives", knifeTxt, 5000, knifeMax);
+
+                    break;
+                }
 
                 case SCENE_GAME: 
                 {
                     // 1. ALWAYS execute the drawing lambda first to render game world
                     DrawGameScene();
 
-                    // Gear Icon (Always visible during gameplay)
-                    DrawRectangleRec(settingsBtn, DARKGRAY);
-                    DrawText("*", settingsBtn.x + 10, settingsBtn.y + 5, 30, WHITE);
+                    if (gameState != STATE_GAME_OVER) {
+                        DrawRectangleRec(settingsBtn, DARKGRAY);
+                        DrawText("*", settingsBtn.x + 10, settingsBtn.y + 5, 30, WHITE);
+                    }
 
                     // 2. Render Settings Overlay ON TOP of everything if open
                     if (showSettings) {
@@ -901,16 +1115,8 @@ int main()
                     }
                     break;
                 }
+            
                 
-                case SCENE_UPGRADES: 
-                {
-                    DrawRectangleRec(backBtn, DARKGRAY);
-                    DrawText("< BACK", backBtn.x + 8, backBtn.y + 6, 16, WHITE);
-                    DrawText("UPGRADES SHOP", 95, 20, 22, GOLD);
-                    
-                    // Knife upgrade UI (from previous step) goes here
-                    break;
-                }
 
                 
             }
