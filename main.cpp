@@ -191,9 +191,11 @@ enum ControlScheme {
 };
 
 
-// Mushroom spawn
-void SpawnMushroom(Position heroPos) {
-    while (true) {
+
+void SpawnMushroom(Position heroPos) 
+{
+    while (true) 
+    {
         int randX = rand() % 3;
         int randY = rand() % 3;
         Position candidate = {randX, randY};
@@ -218,6 +220,10 @@ void SpawnMushroom(Position heroPos) {
         break;
     }
 }
+
+
+
+// Mushroom spawn
 
 // General cost function based on target level (Lvl 1 = 500f, Lvl 2 = 1000f, etc.)
 int GetStandardUpgradeCost(int currentLvl) {
@@ -258,11 +264,12 @@ int GetKillMushroomCost(int lvl) {
 
 void ResetGame(Position& hero, int& score, int& flowers, int& hp, int& dashCharges, 
                int& availableKnives, int& maxKnives, float& shieldEndTime, GameState& state, 
-               const PlayerUpgrades& upgrades) {
+               const PlayerUpgrades& upgrades, int& streakKills, float& streakMultiplier, 
+               bool& isStreakActive, int& currentGraceCharges, int maxGraceCapacity) {
     hero = {1, 1};
     score = 0;
     flowers = 0;
-    hp = GetMaxPlayerHp(upgrades.playerHpLvl); // Starts run with upgraded HP
+    hp = GetMaxPlayerHp(upgrades.playerHpLvl);
     shieldEndTime = 0.0f;
     
     cactuses.clear();
@@ -270,8 +277,14 @@ void ResetGame(Position& hero, int& score, int& flowers, int& hp, int& dashCharg
     droppedKnives.clear();
 
     dashCharges = 3;
-    maxKnives = (upgrades.knifeLvl > 0) ? 2 : 1; // Unlocks 2 knives if purchased
+    maxKnives = (upgrades.knifeLvl > 0) ? 2 : 1;
     availableKnives = maxKnives;
+
+    // RESET STREAK & GRACE STATE
+    streakKills = 0;
+    streakMultiplier = 1.0f;
+    isStreakActive = false;
+    currentGraceCharges = maxGraceCapacity;
 
     SpawnCactus(hero);
     state = STATE_PLAYING;
@@ -337,18 +350,28 @@ int main()
     int movesToCactusRespawn = 0;
     int maxKnives = 1;        
     int availableKnives = 1;  
+    int hitCactus = 0;
     const int MAX_DASH_CHARGES = 3; // Max dash charges
     GameState gameState = STATE_PLAYING;
     float shieldEndTime = 0; 
     //chack if we need new cactus
     bool pendingCactusRespawn = false; 
+    //cahck if we need new mushroom
+    int movesSinceLastCactusKill = 0;
+
+    //Kill streak variables
+    int streakKills = 0;
+    float streakMultiplier = 1.0f;
+    bool isStreakActive = false;
+
+    int maxGraceCapacity = 1;     // Upgradable in shop (1, 2, 3...)
+    int currentGraceCharges = 1;   // Remaining grace steps in current run
 
     // Persistent Saved Data
     int totalFlowers = LoadStorageValue(STORAGE_POS_FLOWERS);
 
     // App State Flags
     AppScene currentScene = SCENE_MAIN_MENU;
-    ControlScheme controlScheme = CONTROL_KEYBOARD;
     float volume = 0.8f;
     bool isPaused = false;
     bool showSettings = false;
@@ -404,12 +427,7 @@ int main()
                     if (CheckCollisionPointRec(mousePoint, backBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                         showSettings = false; // Close settings overlay
                     }
-                    if (CheckCollisionPointRec(mousePoint, kbBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                        controlScheme = CONTROL_KEYBOARD;
-                    }
-                    if (CheckCollisionPointRec(mousePoint, msBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                        controlScheme = CONTROL_MOUSE;
-                    }
+                    
                     if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mousePoint, volBar)) {
                         volume = (mousePoint.x - volBar.x) / volBar.width;
                         if (volume < 0.0f) volume = 0.0f;
@@ -419,7 +437,7 @@ int main()
                 // 2. Base Main Menu buttons (ONLY active when Settings is closed)
                 else {
                     if (CheckCollisionPointRec(mousePoint, playBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                        ResetGame(hero, score, flowers, hp, dashCharges, availableKnives, maxKnives, shieldEndTime, gameState, playerUpgrades);
+                        ResetGame(hero, score, flowers, hp, dashCharges, availableKnives, maxKnives, shieldEndTime, gameState, playerUpgrades, streakKills, streakMultiplier, isStreakActive, currentGraceCharges, maxGraceCapacity);
                         currentScene = SCENE_GAME;
                     }
                     if (CheckCollisionPointRec(mousePoint, upgradesBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -513,8 +531,6 @@ int main()
                     if (CheckCollisionPointRec(mousePoint, backBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                         showSettings = false; // Closes settings overlay, returning focus to Pause menu
                     }
-                    if (CheckCollisionPointRec(mousePoint, kbBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) controlScheme = CONTROL_KEYBOARD;
-                    if (CheckCollisionPointRec(mousePoint, msBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) controlScheme = CONTROL_MOUSE;
                     if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mousePoint, volBar)) {
                         volume = (mousePoint.x - volBar.x) / volBar.width;
                         if (volume < 0.0f) volume = 0.0f;
@@ -549,6 +565,7 @@ int main()
                         // Space key held down and shield not active
                         bool canDash = ((IsKeyDown(KEY_SPACE) || IsKeyPressed(KEY_SPACE)) && !IsShieldActive(shieldEndTime)) && (dashCharges > 0); 
                         
+                        // KEYBOARD INPUTS
                         if (IsKeyPressed(KEY_D)) {
                             // Hold Space at x=0 -> Dash all the way RIGHT to x=2
                             if (canDash && hero.x == 0) { nextHeroPos.x = 2; moved = true; isDash = true; }
@@ -583,19 +600,55 @@ int main()
                             if (IsKeyPressed(KEY_C)) { knifeDir = { 1,  1}; threwKnife = true; }
                         }
 
+                        // MOUSE / TOUCHSCREEN INPUT
+                        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !moved && !threwKnife) {
+                            for (int r = 0; r < 3; r++) {
+                                for (int c = 0; c < 3; c++) {
+                                    Rectangle tileRec = { (float)(c * 100 + 30), (float)(r * 130 + 160), 100.0f, 130.0f };
+
+                                    if (CheckCollisionPointRec(mousePoint, tileRec)) {
+                                        int dx = c - hero.x;
+                                        int dy = r - hero.y;
+                                        int absX = std::abs(dx);
+                                        int absY = std::abs(dy);
+
+                                        // A. ADJACENT CELL CLICK (Move or Attack Cactus)
+                                        if (absX + absY == 1) {
+                                            nextHeroPos = { c, r };
+                                            moved = true;
+                                        }
+                                        // B. DIAGONAL CELL CLICK (Throw Knife)
+                                        else if (absX > 0 && absY > 0) {
+                                            if (availableKnives > 0) {
+                                                knifeDir = { (dx > 0) ? 1 : -1, (dy > 0) ? 1 : -1 };
+                                                threwKnife = true;
+                                            }
+                                        }
+                                        // C. STRAIGHT NON-ADJACENT CELL CLICK (Dash)
+                                        else if ((dx == 0 || dy == 0) && (absX + absY > 1)) {
+                                            if (dashCharges > 0 && !IsShieldActive(shieldEndTime)) {
+                                                nextHeroPos = { c, r };
+                                                moved = true;
+                                                isDash = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         //Knife trajectory
                         if (threwKnife) 
                         {
                             availableKnives--;
                             Position currKnifePos = hero;
+                            bool hitCactus = false; // Reset per throw
 
                             while (true) {
                                 Position nextKnifePos = { currKnifePos.x + knifeDir.x, currKnifePos.y + knifeDir.y };
 
-                                // 1. Check if knife leaves the 3x3 grid (x: 0..2, y: 0..2)
-                                if (nextKnifePos.x < 0 || nextKnifePos.x > 2 || nextKnifePos.y < 0 || nextKnifePos.y > 2) 
-                                {
-                                    // Drops on the last valid grid cell inside the border
+                                // Knife hits edge/wall (Miss)
+                                if (nextKnifePos.x < 0 || nextKnifePos.x > 2 || nextKnifePos.y < 0 || nextKnifePos.y > 2) {
                                     droppedKnives.push_back({currKnifePos});
                                     break;
                                 }
@@ -607,17 +660,55 @@ int main()
                                     // Destroy the cactus using C++17 remove-erase pattern
                                     cactuses.erase(std::remove(cactuses.begin(), cactuses.end(), currKnifePos), cactuses.end());
                                     
-                                    // Award rewards
-                                    score += 500;
+                                    streakKills++;
+                                    if (currentGraceCharges < maxGraceCapacity) {
+                                        currentGraceCharges++;
+                                    }
+
+                                    // Trigger or extend streak
+                                    if (streakKills >= 3) {
+                                        isStreakActive = true;
+                                        streakMultiplier = 1.1f + (float)(streakKills - 3) * 0.1f;
+                                    }
+
+                                    int basePoints = 500;
+                                    int earnedPoints = (int)(basePoints * streakMultiplier);
+                                    score += earnedPoints;
                                     flowers += 1;
                                     totalFlowers += 1; 
                                     SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
+                                    movesSinceLastCactusKill = 0;
                                     
                                     // Knife stops and rests on the cactus's tile
                                     droppedKnives.push_back({currKnifePos});
+
+                                    hitCactus = true;
                                     break;
                                 }
+                                
                             }
+                            if (!hitCactus)
+                                {
+                                    // Non-killing move logic
+                                    if (isStreakActive) {
+                                        if (!IsShieldActive(shieldEndTime)) {
+                                            currentGraceCharges--;
+                                        }
+
+                                        // If grace charges run out, streak ends cleanly
+                                        if (currentGraceCharges < 0) {
+                                            isStreakActive = false;
+                                            streakKills = 0;
+                                            streakMultiplier = 1.0f;
+                                            currentGraceCharges = maxGraceCapacity; // Reset pool
+                                        }
+                                    } else {
+                                        // Reset build-up counter if streak hasn't activated yet
+                                        if (!IsShieldActive(shieldEndTime)) {
+                                            streakKills = 0;
+                                        }
+                                    }
+                                }
                         }
 
 
@@ -637,22 +728,20 @@ int main()
                                 }
                             }
                         }
-
+ 
                         if (isDash) 
                         {   
-                            // Consume a dash charge
+                            // 1. Consume dash charge
                             dashCharges--;
 
-                            //Calculates the bounds
+                            // 2. Calculate spatial bounds for the dash trajectory
                             int startX = std::min(hero.x, nextHeroPos.x);
                             int endX   = std::max(hero.x, nextHeroPos.x);
                             int startY = std::min(hero.y, nextHeroPos.y);
                             int endY   = std::max(hero.y, nextHeroPos.y);
 
-                                //count of killed cactuses
+                            // 3. Kill all cactuses encountered along the dash line
                             int killedCount = 0;
-
-                                //kill all cactuses on the way
                             for (auto it = cactuses.begin(); it != cactuses.end(); ) {
                                 if (it->x >= startX && it->x <= endX && it->y >= startY && it->y <= endY) {
                                     it = cactuses.erase(it);
@@ -662,14 +751,58 @@ int main()
                                 }
                             }
 
-                             // Awards and move hero
-                            score += killedCount * 500;
-                            flowers += killedCount * 1;
-                            totalFlowers += killedCount * 1;
-                            SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
-                            hero = nextHeroPos; // Move hero across the board
+                            // 4. Pre-check if destination tile contains a mushroom
+                            bool landedOnMushroom = false;
+                            for (const auto& m : mushrooms) {
+                                if (m.pos == nextHeroPos) {
+                                    landedOnMushroom = true;
+                                    break;
+                                }
+                            }
 
-                            // Collect knife if dash ENDS directly on the knife cell (and no cactus is on it)
+                            // 5. Evaluate Kill rewards OR Grace penalties
+                            if (killedCount > 0) {
+                                streakKills += killedCount;
+                                if (currentGraceCharges < maxGraceCapacity) {
+                                    currentGraceCharges++;
+                                }
+
+                                if (streakKills >= 3) {
+                                    isStreakActive = true;
+                                    streakMultiplier = 1.1f + (float)(streakKills - 3) * 0.1f;
+                                }
+
+                                int basePoints = 500 * killedCount;
+                                score += (int)(basePoints * streakMultiplier);
+                                flowers += killedCount;
+                                totalFlowers += killedCount;
+                                SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
+                                movesSinceLastCactusKill = 0;
+                            } 
+                            // ONLY deduct grace/reset streak if dash killed NOTHING AND did NOT land on a mushroom
+                            else if (!landedOnMushroom) {
+                                if (isStreakActive) {
+                                    if (!IsShieldActive(shieldEndTime)) {
+                                        currentGraceCharges--;
+                                    }
+
+                                    if (currentGraceCharges < 0) {
+                                        isStreakActive = false;
+                                        streakKills = 0;
+                                        streakMultiplier = 1.0f;
+                                        currentGraceCharges = maxGraceCapacity;
+                                    }
+                                } else {
+                                    if (!IsShieldActive(shieldEndTime)) {
+                                        streakKills = 0;
+                                    }
+                                }
+                            }
+
+                            // 6. Update position
+                            hero = nextHeroPos;
+
+                            // 7. Collect dropped knives if ending on knife cell
                             for (auto it = droppedKnives.begin(); it != droppedKnives.end(); ) {
                                 if (it->pos == hero && !IsCactusAt(hero)) {
                                     availableKnives++;
@@ -679,12 +812,11 @@ int main()
                                 }
                             }
 
-                            // Check if hero lands on a mushroom 
+                            // 8. Process Mushroom Pickup Effects
                             for (auto it = mushrooms.begin(); it != mushrooms.end(); ) 
                             {
                                 if (it->pos == hero) 
                                 {
-                                    // --- REPLACE FROM HERE ---
                                     if (it->type == MSH_HP) 
                                     {
                                         hp += GetMushroomHpBonus(playerUpgrades.hpMushroomLvl);
@@ -696,29 +828,49 @@ int main()
                                     else if (it->type == MSH_KILL_CACTUS) 
                                     {
                                         int killsToPerform = GetMushroomCactusKills(playerUpgrades.killMushroomLvl);
+                                        int actualKills = 0;
+
                                         for (int k = 0; k < killsToPerform && !cactuses.empty(); k++) {
                                             int indexToKill = rand() % cactuses.size();
                                             cactuses.erase(cactuses.begin() + indexToKill);
+                                            actualKills++;
                                         }
+
+                                        if (actualKills > 0) {
+                                            streakKills += actualKills;
+                                            if (currentGraceCharges < maxGraceCapacity) {
+                                                currentGraceCharges++;
+                                            }
+
+                                            if (streakKills >= 3) {
+                                                isStreakActive = true;
+                                                streakMultiplier = 1.1f + (float)(streakKills - 3) * 0.1f;
+                                            }
+
+                                            int basePoints = 500 * actualKills;
+                                            score += (int)(basePoints * streakMultiplier);
+                                            flowers += actualKills;
+                                            totalFlowers += actualKills;
+                                            SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
+                                            movesSinceLastCactusKill = 0;
+                                        }
+
                                         pendingCactusRespawn = true; 
                                         movesToCactusRespawn = 2;
                                     }
-                                    // --- REPLACE UNTIL HERE ---
 
-                                    it = mushrooms.erase(it); // Remove collected mushroom
+                                    it = mushrooms.erase(it);
                                 } else {
                                     ++it;
                                 }
                             }
-                            
 
-                                //deal damage if near cactus, with no shield
+                            // 9. Cactus proximity damage check
                             if (IsNearToCactus(hero) && !IsShieldActive(shieldEndTime)) {
-                            hp--;
+                                hp--;
                             }
 
-
-                            // Spawn mashroom
+                            // 10. Spawn mushroom if eligible
                             if (score >= 15000 && mushrooms.empty()) {
                                 int chance = GetMushroomSpawnChance(playerUpgrades.mushSpawnRateLvl);
                                 if ((rand() % 100) < chance) {
@@ -729,27 +881,78 @@ int main()
                         // IF MOVED
                         else if (moved)
                         {   
-                            // If the hero moved, restore a dash charge if not full
+                            // Restore dash charge
                             if (dashCharges < MAX_DASH_CHARGES) {
-                            dashCharges++;
+                                dashCharges++;
                             }
 
-                            // move hero if the space is NOT blocked 
-                            if (!IsCactusAt(nextHeroPos)) 
-                            {
-                                hero = nextHeroPos;
+                            // Check what is on the target tile
+                            bool hitCactus = IsCactusAt(nextHeroPos);
+                            
+                            // Check if hero is moving onto a mushroom
+                            bool hitMushroom = false;
+                            for (const auto& m : mushrooms) {
+                                if (m.pos == nextHeroPos) {
+                                    hitMushroom = true;
+                                    break;
+                                }
                             }
-                            else if (IsCactusAt(nextHeroPos))
-                            {
-                                //remove cactuse
-                            cactuses.erase(std::remove(cactuses.begin(), cactuses.end(), nextHeroPos), cactuses.end()); 
 
-                                score += 500;
+                            if (hitCactus)
+                            {
+                                cactuses.erase(std::remove(cactuses.begin(), cactuses.end(), nextHeroPos), cactuses.end()); 
+                                
+                                streakKills++;
+                                if (currentGraceCharges < maxGraceCapacity) {
+                                    currentGraceCharges++;
+                                }
+
+                                if (streakKills >= 3) {
+                                    isStreakActive = true;
+                                    streakMultiplier = 1.1f + (float)(streakKills - 3) * 0.1f;
+                                }
+
+                                int basePoints = 500;
+                                int earnedPoints = (int)(basePoints * streakMultiplier);
+                                score += earnedPoints;
                                 flowers += 1;
                                 totalFlowers += 1;
                                 SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
+                                movesSinceLastCactusKill = 0;
                             }
-                            // Collect knife ONLY on a normal step if no cactus is currently on it
+                            else 
+                            {
+                                hero = nextHeroPos;
+                                
+                                movesSinceLastCactusKill++;
+
+                                // Apply grace penalty ONLY IF the move did NOT hit a cactus AND did NOT land on a mushroom
+                                if (!hitMushroom) 
+                                {
+                                    if (isStreakActive) 
+                                    {
+                                        if (!IsShieldActive(shieldEndTime)) {
+                                            currentGraceCharges--;
+                                        }
+
+                                        if (currentGraceCharges < 0) {
+                                            isStreakActive = false;
+                                            streakKills = 0;
+                                            streakMultiplier = 1.0f;
+                                            currentGraceCharges = maxGraceCapacity;
+                                        }
+                                    } 
+                                    else 
+                                    {
+                                        if (!IsShieldActive(shieldEndTime)) {
+                                            streakKills = 0;
+                                        }
+                                    }
+                                }
+                            }
+
+
+                            // Collect dropped knives
                             for (auto it = droppedKnives.begin(); it != droppedKnives.end(); ) {
                                 if (it->pos == hero && !IsCactusAt(hero)) {
                                     availableKnives++;
@@ -759,14 +962,11 @@ int main()
                                 }
                             }
 
-                        
-
-                            // Check if hero lands on a mushroom during DASH
+                            // Process Mushroom Pickup
                             for (auto it = mushrooms.begin(); it != mushrooms.end(); ) 
                             {
                                 if (it->pos == hero) 
                                 {
-                                    // --- REPLACE FROM HERE ---
                                     if (it->type == MSH_HP) 
                                     {
                                         hp += GetMushroomHpBonus(playerUpgrades.hpMushroomLvl);
@@ -778,29 +978,53 @@ int main()
                                     else if (it->type == MSH_KILL_CACTUS) 
                                     {
                                         int killsToPerform = GetMushroomCactusKills(playerUpgrades.killMushroomLvl);
+                                        int actualKills = 0;
+
                                         for (int k = 0; k < killsToPerform && !cactuses.empty(); k++) {
                                             int indexToKill = rand() % cactuses.size();
                                             cactuses.erase(cactuses.begin() + indexToKill);
+                                            actualKills++;
                                         }
+
+                                        // Restore/extend streak upon killing cactus via mushroom
+                                        if (actualKills > 0) {
+                                            streakKills += actualKills;
+
+                                            if (currentGraceCharges < maxGraceCapacity) {
+                                                currentGraceCharges++;
+                                            }
+
+                                            if (streakKills >= 3) {
+                                                isStreakActive = true;
+                                                streakMultiplier = 1.1f + (float)(streakKills - 3) * 0.1f;
+                                            }
+
+                                            int basePoints = 500 * actualKills;
+                                            score += (int)(basePoints * streakMultiplier);
+                                            flowers += actualKills;
+                                            totalFlowers += actualKills;
+                                            SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
+                                            movesSinceLastCactusKill = 0;
+                                        }
+
                                         pendingCactusRespawn = true; 
                                         movesToCactusRespawn = 2;
                                     }
-                                    // --- REPLACE UNTIL HERE ---
- 
-                                    it = mushrooms.erase(it); // Remove collected mushroom
+
+                                    it = mushrooms.erase(it);
                                 } else {
                                     ++it;
                                 }
                             }
-                                // Take dammage
-                            if (moved && IsNearToCactus(hero) && !IsShieldActive(shieldEndTime))  
-                            {
+
+                            // Damage check
+                            if (IsNearToCactus(hero) && !IsShieldActive(shieldEndTime)) {
                                 hp--;
-                                    
                             }
 
-                                //spawn mashroom
-                            if (score >= 15000 && mushrooms.empty()) {
+                            // Mushroom spawn attempt
+                            bool canSpawnMushroom = (movesSinceLastCactusKill < 3);
+                            if (canSpawnMushroom && score >= 15000 && mushrooms.empty()) {
                                 int chance = GetMushroomSpawnChance(playerUpgrades.mushSpawnRateLvl);
                                 if ((rand() % 100) < chance) {
                                     SpawnMushroom(hero);
@@ -857,7 +1081,7 @@ int main()
                                                 (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonReleased(MOUSE_BUTTON_LEFT));
 
                         if (mouseRestartClicked || keyRestartPressed) {
-                            ResetGame(hero, score, flowers, hp, dashCharges, availableKnives, maxKnives, shieldEndTime, gameState, playerUpgrades);
+                            ResetGame(hero, score, flowers, hp, dashCharges, availableKnives, maxKnives, shieldEndTime, gameState, playerUpgrades, streakKills, streakMultiplier, isStreakActive, currentGraceCharges, maxGraceCapacity);
                         }
                         else if (mouseExitClicked) {
                             currentScene = SCENE_MAIN_MENU;
@@ -928,6 +1152,24 @@ int main()
                 DrawCircle(mPixelX, mPixelY, 14, mColor);
             }
 
+            if (isStreakActive) {
+                int centerX = gameWidth / 2;
+
+                // Multiplier Text
+                const char* streakText = TextFormat("STREAK x%.1f!", streakMultiplier);
+                int streakTextWidth = MeasureText(streakText, 20);
+                DrawText(streakText, centerX - (streakTextWidth / 2), 118, 20, GOLD);
+
+                // Grace Text (Shows "INF" when shield is active)
+                const char* graceText = IsShieldActive(shieldEndTime) 
+                    ? "GRACE: INF" 
+                    : TextFormat("GRACE: %d/%d", currentGraceCharges, maxGraceCapacity);
+                    
+                int graceTextWidth = MeasureText(graceText, 14);
+                Color graceColor = IsShieldActive(shieldEndTime) ? SKYBLUE : ORANGE;
+                DrawText(graceText, centerX - (graceTextWidth / 2), 138, 14, graceColor);
+            }
+
             if (IsShieldActive(shieldEndTime)) {
                 DrawCircleLines(heroPixelX, heroPixelY, 28, SKYBLUE);
             }
@@ -986,14 +1228,7 @@ int main()
                         DrawText("< BACK", backBtn.x + 8, backBtn.y + 6, 16, WHITE);
                         DrawText("SETTINGS", 120, 20, 24, WHITE);
                         
-                        // Control scheme options
-                        DrawText("Movement Scheme:", 50, 170, 18, WHITE);
-                        DrawRectangleRec(kbBtn, controlScheme == CONTROL_KEYBOARD ? BLUE : DARKGRAY);
-                        DrawText("KEYBOARD", kbBtn.x + 12, kbBtn.y + 12, 14, WHITE);
                         
-                        DrawRectangleRec(msBtn, controlScheme == CONTROL_MOUSE ? BLUE : DARKGRAY);
-                        DrawText("MOUSE", msBtn.x + 30, msBtn.y + 12, 14, WHITE);
-
                         // Volume bar
                         DrawText(TextFormat("Volume: %d%%", (int)(volume * 100)), 50, 280, 18, WHITE);
                         DrawRectangleRec(volBar, LIGHTGRAY);
@@ -1088,12 +1323,7 @@ int main()
                         DrawText("< BACK", backBtn.x + 8, backBtn.y + 6, 16, WHITE);
                         DrawText("SETTINGS", 120, 20, 24, WHITE);
 
-                        DrawText("Movement Scheme:", 50, 170, 18, WHITE);
-                        DrawRectangleRec(kbBtn, controlScheme == CONTROL_KEYBOARD ? BLUE : DARKGRAY);
-                        DrawText("KEYBOARD", kbBtn.x + 12, kbBtn.y + 12, 14, WHITE);
-                        DrawRectangleRec(msBtn, controlScheme == CONTROL_MOUSE ? BLUE : DARKGRAY);
-                        DrawText("MOUSE", msBtn.x + 30, msBtn.y + 12, 14, WHITE);
-
+                       
                         DrawText(TextFormat("Volume: %d%%", (int)(volume * 100)), 50, 280, 18, WHITE);
                         DrawRectangleRec(volBar, LIGHTGRAY);
                         DrawRectangle(volBar.x, volBar.y, volBar.width * volume, volBar.height, BLUE);
