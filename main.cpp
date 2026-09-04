@@ -164,10 +164,11 @@ bool IsShieldActive(float shieldEndTime) {
 
 
 // how many cactuses should be on screen based on the score
-int GetCactusAmount(int score) {
-    if (score >= 55000) return 3;
-    if (score >= 10000)  return 2;
-    return 1;
+int GetCactusAmount(int totalKills) {
+    // 5-step cycle: 1 -> 2 -> 3 -> 2 -> 1
+    const int pattern[] = { 1, 2, 3, 2, 1 };
+    int index = (totalKills / 25) % 5; // Shifts pattern step every 3 kills
+    return pattern[index];
 }
 
 
@@ -228,66 +229,102 @@ void SpawnMushroom(Position heroPos)
 // General cost function based on target level (Lvl 1 = 500f, Lvl 2 = 1000f, etc.)
 int GetStandardUpgradeCost(int currentLvl) {
     int baseCost = 500;
-    float multiplier = 1.6f;
+    float multiplier = 1.65f;
     return static_cast<int>(baseCost * std::pow(multiplier, currentLvl));
 }
-
-// Stat Lookups based on upgrade progression levels
+// Revised Shield Scaling: Level 0 (2s) to Level 5 (7s)
 float GetShieldDuration(int lvl) {
-    const float durations[] = { 3.0f, 5.0f, 7.0f, 9.0f, 10.0f, 13.0f, 15.0f };
-    return durations[std::min(lvl, 6)];
+    const float durations[] = { 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f };
+    return durations[std::min(lvl, 5)];
 }
 
+// Revised Player Max HP: Level 0 (3 HP) to Level 5 (8 HP)
 int GetMaxPlayerHp(int lvl) {
-    const int hpValues[] = { 3, 4, 5, 6, 7, 8, 9, 10, 15 };
-    return hpValues[std::min(lvl, 8)];
+    const int hpValues[] = { 3, 4, 5, 6, 7, 8 };
+    return hpValues[std::min(lvl, 5)];
 }
 
+// Revised Mushroom HP Bonus: Level 0 (+1 HP) to Level 2 (+3 HP)
 int GetMushroomHpBonus(int lvl) {
-    return std::min(lvl + 1, 10);
+    const int hpBonus[] = { 1, 2, 3 };
+    return hpBonus[std::min(lvl, 2)];
 }
 
+// Mushroom Cactus Kills: Level 0 (1 Cactus), Level 1 (2 Cacti), Level 2 (3 Cacti)
 int GetMushroomCactusKills(int lvl) {
     return std::min(lvl + 1, 3);
 }
 
+// Revised Spawn Chance: Level 0 (2%) to Level 5 (7%)
 int GetMushroomSpawnChance(int lvl) {
-    const int chances[] = { 3, 5, 7, 10, 12, 15, 17, 20, 25 };
-    return chances[std::min(lvl, 8)];
+    const int chances[] = { 2, 3, 4, 5, 6, 7 };
+    return chances[std::min(lvl, 5)];
 }
 
+// Updated Mushroom Kill Upgrade Cost Curve
 int GetKillMushroomCost(int lvl) {
     if (lvl == 0) return 2500;
     if (lvl == 1) return 4500;
     return 0; // Max level reached
 }
 
-void ResetGame(Position& hero, int& score, int& flowers, int& hp, int& dashCharges, 
-               int& availableKnives, int& maxKnives, float& shieldEndTime, GameState& state, 
-               const PlayerUpgrades& upgrades, int& streakKills, float& streakMultiplier, 
-               bool& isStreakActive, int& currentGraceCharges, int maxGraceCapacity) {
-    hero = {1, 1};
-    score = 0;
-    flowers = 0;
-    hp = GetMaxPlayerHp(upgrades.playerHpLvl);
-    shieldEndTime = 0.0f;
+struct GameContext {
+    Position hero = {1, 1};
+    int score = 0;
+    int flowers = 0;
+    int hp = 5;
+    int dashCharges = 3;
+    int availableKnives = 1;
+    int maxKnives = 1;
+    float shieldEndTime = 0.0f;
+    GameState state = STATE_PLAYING;
+    
+    // Streak & Grace
+    int streakKills = 0;
+    float streakMultiplier = 1.0f;
+    bool isStreakActive = false;
+    int currentGraceCharges = 1;
+    int maxGraceCapacity = 1;
+
+    // Kills counter for cactus wave cycling
+    int totalCactiKilled = 0;
+
+    // Respawn & Mushroom Trackers
+    int movesToCactusRespawn = 0;
+    bool pendingCactusRespawn = false;
+    int movesSinceLastCactusKill = 0;
+};
+
+void ResetGame(GameContext& ctx, const PlayerUpgrades& upgrades) {
+    ctx.hero = {1, 1};
+    ctx.score = 0;
+    ctx.flowers = 0;
+    ctx.hp = GetMaxPlayerHp(upgrades.playerHpLvl);
+    ctx.shieldEndTime = 0.0f;
+    ctx.state = STATE_PLAYING;
     
     cactuses.clear();
     mushrooms.clear();
     droppedKnives.clear();
 
-    dashCharges = 3;
-    maxKnives = (upgrades.knifeLvl > 0) ? 2 : 1;
-    availableKnives = maxKnives;
+    ctx.dashCharges = 3;
+    ctx.maxKnives = (upgrades.knifeLvl > 0) ? 2 : 1;
+    ctx.availableKnives = ctx.maxKnives;
 
-    // RESET STREAK & GRACE STATE
-    streakKills = 0;
-    streakMultiplier = 1.0f;
-    isStreakActive = false;
-    currentGraceCharges = maxGraceCapacity;
+    // Reset Streak & Grace State
+    ctx.streakKills = 0;
+    ctx.streakMultiplier = 1.0f;
+    ctx.isStreakActive = false;
+    ctx.maxGraceCapacity = 1;
+    ctx.currentGraceCharges = ctx.maxGraceCapacity;
 
-    SpawnCactus(hero);
-    state = STATE_PLAYING;
+    // Reset Wave & Respawn Trackers
+    ctx.totalCactiKilled = 0;
+    ctx.movesToCactusRespawn = 0;
+    ctx.pendingCactusRespawn = false;
+    ctx.movesSinceLastCactusKill = 0;
+
+    SpawnCactus(ctx.hero);
 }
 
 // Save data directly to storage file
@@ -376,6 +413,31 @@ int main()
     bool isPaused = false;
     bool showSettings = false;
 
+    GameContext gameCtx;
+
+    // Add this right after initializing your local variables in main()
+    auto SyncVarsFromContext = [&]() {
+        hero = gameCtx.hero;
+        score = gameCtx.score;
+        flowers = gameCtx.flowers;
+        hp = gameCtx.hp;
+        dashCharges = gameCtx.dashCharges;
+        availableKnives = gameCtx.availableKnives;
+        maxKnives = gameCtx.maxKnives;
+        shieldEndTime = gameCtx.shieldEndTime;
+        gameState = gameCtx.state;
+
+        streakKills = gameCtx.streakKills;
+        streakMultiplier = gameCtx.streakMultiplier;
+        isStreakActive = gameCtx.isStreakActive;
+        currentGraceCharges = gameCtx.currentGraceCharges;
+        maxGraceCapacity = gameCtx.maxGraceCapacity;
+
+        movesToCactusRespawn = gameCtx.movesToCactusRespawn;
+        pendingCactusRespawn = gameCtx.pendingCactusRespawn;
+        movesSinceLastCactusKill = gameCtx.movesSinceLastCactusKill;
+    };
+
     // UI Buttons & Layout Rectangles
     Rectangle playBtn = { 100, 220, 160, 50 };
     Rectangle upgradesBtn = { 100, 290, 160, 50 };
@@ -403,7 +465,8 @@ int main()
     Rectangle exitGameBtn = { 80, 420, 200, 50 }; // Placed directly below restart
     
     // Spawn first Cactus
-    SpawnCactus(hero);
+    ResetGame(gameCtx, playerUpgrades);
+    SyncVarsFromContext();
 
 
     
@@ -437,7 +500,9 @@ int main()
                 // 2. Base Main Menu buttons (ONLY active when Settings is closed)
                 else {
                     if (CheckCollisionPointRec(mousePoint, playBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                        ResetGame(hero, score, flowers, hp, dashCharges, availableKnives, maxKnives, shieldEndTime, gameState, playerUpgrades, streakKills, streakMultiplier, isStreakActive, currentGraceCharges, maxGraceCapacity);
+                        // Resetting on menu play or game restart
+                        ResetGame(gameCtx, playerUpgrades);
+                        SyncVarsFromContext();
                         currentScene = SCENE_GAME;
                     }
                     if (CheckCollisionPointRec(mousePoint, upgradesBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -459,7 +524,7 @@ int main()
                 // Shield Upgrade Click
                 if (CheckCollisionPointRec(mousePoint, btnShield) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                     int cost = GetStandardUpgradeCost(playerUpgrades.shieldLvl);
-                    if (playerUpgrades.shieldLvl < 6 && totalFlowers >= cost) {
+                    if (playerUpgrades.shieldLvl < 5 && totalFlowers >= cost) {
                         totalFlowers -= cost;
                         playerUpgrades.shieldLvl++;
                         SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
@@ -470,7 +535,7 @@ int main()
                 // Max HP Upgrade Click
                 if (CheckCollisionPointRec(mousePoint, btnPlayerHp) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                     int cost = GetStandardUpgradeCost(playerUpgrades.playerHpLvl);
-                    if (playerUpgrades.playerHpLvl < 8 && totalFlowers >= cost) {
+                    if (playerUpgrades.playerHpLvl < 5 && totalFlowers >= cost) {
                         totalFlowers -= cost;
                         playerUpgrades.playerHpLvl++;
                         SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
@@ -481,7 +546,7 @@ int main()
                 // Mushroom HP Upgrade Click
                 if (CheckCollisionPointRec(mousePoint, btnMushHp) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                     int cost = GetStandardUpgradeCost(playerUpgrades.hpMushroomLvl);
-                    if (playerUpgrades.hpMushroomLvl < 9 && totalFlowers >= cost) {
+                    if (playerUpgrades.hpMushroomLvl < 2 && totalFlowers >= cost) {
                         totalFlowers -= cost;
                         playerUpgrades.hpMushroomLvl++;
                         SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
@@ -503,7 +568,7 @@ int main()
                 // Spawn Rate Upgrade Click
                 if (CheckCollisionPointRec(mousePoint, btnSpawnRate) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                     int cost = GetStandardUpgradeCost(playerUpgrades.mushSpawnRateLvl);
-                    if (playerUpgrades.mushSpawnRateLvl < 8 && totalFlowers >= cost) {
+                    if (playerUpgrades.mushSpawnRateLvl < 5 && totalFlowers >= cost) {
                         totalFlowers -= cost;
                         playerUpgrades.mushSpawnRateLvl++;
                         SaveStorageValue(STORAGE_POS_FLOWERS, totalFlowers);
@@ -661,6 +726,7 @@ int main()
                                     cactuses.erase(std::remove(cactuses.begin(), cactuses.end(), currKnifePos), cactuses.end());
                                     
                                     streakKills++;
+                                    gameCtx.totalCactiKilled++;
                                     if (currentGraceCharges < maxGraceCapacity) {
                                         currentGraceCharges++;
                                     }
@@ -746,6 +812,7 @@ int main()
                                 if (it->x >= startX && it->x <= endX && it->y >= startY && it->y <= endY) {
                                     it = cactuses.erase(it);
                                     killedCount++;
+                                    gameCtx.totalCactiKilled++;
                                 } else {
                                     ++it;
                                 }
@@ -829,6 +896,7 @@ int main()
                                     {
                                         int killsToPerform = GetMushroomCactusKills(playerUpgrades.killMushroomLvl);
                                         int actualKills = 0;
+                                        gameCtx.totalCactiKilled++;
 
                                         for (int k = 0; k < killsToPerform && !cactuses.empty(); k++) {
                                             int indexToKill = rand() % cactuses.size();
@@ -903,6 +971,7 @@ int main()
                                 cactuses.erase(std::remove(cactuses.begin(), cactuses.end(), nextHeroPos), cactuses.end()); 
                                 
                                 streakKills++;
+                                gameCtx.totalCactiKilled++;
                                 if (currentGraceCharges < maxGraceCapacity) {
                                     currentGraceCharges++;
                                 }
@@ -979,6 +1048,7 @@ int main()
                                     {
                                         int killsToPerform = GetMushroomCactusKills(playerUpgrades.killMushroomLvl);
                                         int actualKills = 0;
+                                        gameCtx.totalCactiKilled++;
 
                                         for (int k = 0; k < killsToPerform && !cactuses.empty(); k++) {
                                             int indexToKill = rand() % cactuses.size();
@@ -1048,7 +1118,7 @@ int main()
                         }
                     
                             //Calculates how many cactuses should be on screen
-                        int targetCactuses = GetCactusAmount(score);
+                        int targetCactuses = GetCactusAmount(gameCtx.totalCactiKilled);
 
 
                         // Hold off spawning extra cactuses while waiting for the timer
@@ -1081,7 +1151,9 @@ int main()
                                                 (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonReleased(MOUSE_BUTTON_LEFT));
 
                         if (mouseRestartClicked || keyRestartPressed) {
-                            ResetGame(hero, score, flowers, hp, dashCharges, availableKnives, maxKnives, shieldEndTime, gameState, playerUpgrades, streakKills, streakMultiplier, isStreakActive, currentGraceCharges, maxGraceCapacity);
+                            // Resetting on menu play or game restart
+                            ResetGame(gameCtx, playerUpgrades);
+                            SyncVarsFromContext();
                         }
                         else if (mouseExitClicked) {
                             currentScene = SCENE_MAIN_MENU;
@@ -1202,7 +1274,6 @@ int main()
                 case SCENE_MAIN_MENU: 
                 {
                     // 1. Draw Base Main Menu UI
-                    DrawText("CACTUS GRID", 50, 100, 32, DARKGREEN);
                     
                     DrawRectangleRec(playBtn, DARKBLUE);
                     DrawText("PLAY", playBtn.x + 50, playBtn.y + 12, 24, WHITE);
