@@ -164,11 +164,37 @@ bool IsShieldActive(float shieldEndTime) {
 
 
 // how many cactuses should be on screen based on the score
-int GetCactusAmount(int totalKills) {
-    // 5-step cycle: 1 -> 2 -> 3 -> 2 -> 1
-    const int pattern[] = { 1, 2, 3, 2, 1 };
-    int index = (totalKills / 25) % 5; // Shifts pattern step every 3 kills
-    return pattern[index];
+int GetCactusAmount(int totalKills, int& outCycleCount) {
+    // Stage base kill targets: [1 Cactus, 2 Cacti, 3 Cacti, 2 Cacti]
+    const int baseKillRequirements[] = { 20, 25, 33, 25 };
+    
+    int killsLeft = totalKills;
+    int cycle = 0;
+
+    while (true) {
+        // Calculate scaling multiplier (1.2 ^ cycle)
+        float cycleMultiplier = std::pow(1.2f, cycle);
+
+        for (int stage = 0; stage < 4; stage++) {
+            int scaledThreshold = static_cast<int>(baseKillRequirements[stage] * cycleMultiplier);
+
+            if (killsLeft < scaledThreshold) {
+                outCycleCount = cycle;
+                
+                // Map stages back to target cactus counts
+                switch (stage) {
+                    case 0: return 1; // Stage 1 (1 Cactus)
+                    case 1: return 2; // Stage 2 (2 Cacti)
+                    case 2: return 3; // Stage 3 (3 Cacti)
+                    case 3: return 2; // Stage 4 (2 Cacti returning to 1)
+                }
+            }
+            killsLeft -= scaledThreshold;
+        }
+
+        // Increment cycle after passing all 4 stages
+        cycle++;
+    }
 }
 
 
@@ -229,7 +255,7 @@ void SpawnMushroom(Position heroPos)
 // General cost function based on target level (Lvl 1 = 500f, Lvl 2 = 1000f, etc.)
 int GetStandardUpgradeCost(int currentLvl) {
     int baseCost = 500;
-    float multiplier = 1.65f;
+    float multiplier = 1.99f;
     return static_cast<int>(baseCost * std::pow(multiplier, currentLvl));
 }
 // Revised Shield Scaling: Level 0 (2s) to Level 5 (7s)
@@ -263,8 +289,8 @@ int GetMushroomSpawnChance(int lvl) {
 
 // Updated Mushroom Kill Upgrade Cost Curve
 int GetKillMushroomCost(int lvl) {
-    if (lvl == 0) return 2500;
-    if (lvl == 1) return 4500;
+    if (lvl == 0) return 4000;
+    if (lvl == 1) return 8000;
     return 0; // Max level reached
 }
 
@@ -283,11 +309,13 @@ struct GameContext {
     int streakKills = 0;
     float streakMultiplier = 1.0f;
     bool isStreakActive = false;
+    float streakTimeRemaining = 5.0f; 
     int currentGraceCharges = 1;
     int maxGraceCapacity = 1;
 
-    // Kills counter for cactus wave cycling
+    // Wave Progression & Kills Tracking
     int totalCactiKilled = 0;
+    int cycleCount = 0;
 
     // Respawn & Mushroom Trackers
     int movesToCactusRespawn = 0;
@@ -315,17 +343,20 @@ void ResetGame(GameContext& ctx, const PlayerUpgrades& upgrades) {
     ctx.streakKills = 0;
     ctx.streakMultiplier = 1.0f;
     ctx.isStreakActive = false;
+    ctx.streakTimeRemaining = 0.0f;
     ctx.maxGraceCapacity = 1;
     ctx.currentGraceCharges = ctx.maxGraceCapacity;
 
-    // Reset Wave & Respawn Trackers
+    // Reset Wave Trackers
     ctx.totalCactiKilled = 0;
+    ctx.cycleCount = 0;
     ctx.movesToCactusRespawn = 0;
     ctx.pendingCactusRespawn = false;
     ctx.movesSinceLastCactusKill = 0;
 
     SpawnCactus(ctx.hero);
 }
+
 
 // Save data directly to storage file
 void SaveGameData(int highestScore, const PlayerUpgrades& upgrades) {
@@ -400,6 +431,7 @@ int main()
     int streakKills = 0;
     float streakMultiplier = 1.0f;
     bool isStreakActive = false;
+    float streakTimeRemaining = 5.0f;
 
     int maxGraceCapacity = 1;     // Upgradable in shop (1, 2, 3...)
     int currentGraceCharges = 1;   // Remaining grace steps in current run
@@ -430,12 +462,37 @@ int main()
         streakKills = gameCtx.streakKills;
         streakMultiplier = gameCtx.streakMultiplier;
         isStreakActive = gameCtx.isStreakActive;
+        streakTimeRemaining = gameCtx.streakTimeRemaining;
         currentGraceCharges = gameCtx.currentGraceCharges;
         maxGraceCapacity = gameCtx.maxGraceCapacity;
+        
 
         movesToCactusRespawn = gameCtx.movesToCactusRespawn;
         pendingCactusRespawn = gameCtx.pendingCactusRespawn;
         movesSinceLastCactusKill = gameCtx.movesSinceLastCactusKill;
+    };
+
+    auto SyncContextFromVars = [&]() {
+        gameCtx.hero = hero;
+        gameCtx.score = score;
+        gameCtx.flowers = flowers;
+        gameCtx.hp = hp;
+        gameCtx.dashCharges = dashCharges;
+        gameCtx.availableKnives = availableKnives;
+        gameCtx.maxKnives = maxKnives;
+        gameCtx.shieldEndTime = shieldEndTime;
+        gameCtx.state = gameState;
+
+        gameCtx.streakKills = streakKills;
+        gameCtx.streakMultiplier = streakMultiplier;
+        gameCtx.isStreakActive = isStreakActive;
+        gameCtx.streakTimeRemaining = streakTimeRemaining;
+        gameCtx.currentGraceCharges = currentGraceCharges;
+        gameCtx.maxGraceCapacity = maxGraceCapacity;
+
+        gameCtx.movesToCactusRespawn = movesToCactusRespawn;
+        gameCtx.pendingCactusRespawn = pendingCactusRespawn;
+        gameCtx.movesSinceLastCactusKill = movesSinceLastCactusKill;
     };
 
     // UI Buttons & Layout Rectangles
@@ -702,6 +759,32 @@ int main()
                             }
                         }
 
+                            //Updates streak timer
+                        if (isStreakActive) {
+                            streakTimeRemaining -= GetFrameTime();
+                            
+                            // Time ran out -> Streak breaks immediately
+                            if (streakTimeRemaining <= 0.0f) {
+                                isStreakActive = false;
+                                streakKills = 0;
+                                streakMultiplier = 1.0f;
+                                streakTimeRemaining = 0.0f;
+                            }
+                        }
+
+                        if (!showSettings && !isPaused && gameState == STATE_PLAYING) {
+                            // Run timer countdown every frame
+                            if (isStreakActive) {
+                                streakTimeRemaining -= GetFrameTime();
+                                if (streakTimeRemaining <= 0.0f) {
+                                    isStreakActive = false;
+                                    streakKills = 0;
+                                    streakMultiplier = 1.0f;
+                                    streakTimeRemaining = 0.0f;
+                                }
+                            }
+                        }
+
                         //Knife trajectory
                         if (threwKnife) 
                         {
@@ -733,11 +816,16 @@ int main()
 
                                     // Trigger or extend streak
                                     if (streakKills >= 3) {
-                                        isStreakActive = true;
+                                        if (!isStreakActive) {
+                                            isStreakActive = true;
+                                            streakTimeRemaining = 5.0f; // Start with 5 seconds on initial streak
+                                        } else {
+                                            streakTimeRemaining += 1.0f; // Add +1 second for every extra cactus kill
+                                        }
                                         streakMultiplier = 1.1f + (float)(streakKills - 3) * 0.1f;
                                     }
 
-                                    int basePoints = 500;
+                                    int basePoints = 250;
                                     int earnedPoints = (int)(basePoints * streakMultiplier);
                                     score += earnedPoints;
                                     flowers += 1;
@@ -768,6 +856,8 @@ int main()
                                             streakMultiplier = 1.0f;
                                             currentGraceCharges = maxGraceCapacity; // Reset pool
                                         }
+
+                                        
                                     } else {
                                         // Reset build-up counter if streak hasn't activated yet
                                         if (!IsShieldActive(shieldEndTime)) {
@@ -778,22 +868,7 @@ int main()
                         }
 
 
-                            //Respawn cactus if destroed by mushroom
-                        if (moved || isDash) 
-                        {
                         
-                            if (pendingCactusRespawn) 
-                            {
-                                movesToCactusRespawn--; // Count down 1 move
-                    
-                                // When 2 moves have passed, trigger the spawn and turn off flag
-                                if (movesToCactusRespawn <= 0) 
-                                {
-                                    SpawnCactus(hero);
-                                    pendingCactusRespawn = false;
-                                }
-                            }
-                        }
  
                         if (isDash) 
                         {   
@@ -835,11 +910,16 @@ int main()
                                 }
 
                                 if (streakKills >= 3) {
-                                    isStreakActive = true;
+                                    if (!isStreakActive) {
+                                        isStreakActive = true;
+                                        streakTimeRemaining = 5.0f; // Start with 5 seconds on initial streak
+                                    } else {
+                                        streakTimeRemaining += 1.0f; // Add +1 second for every extra cactus kill
+                                    }
                                     streakMultiplier = 1.1f + (float)(streakKills - 3) * 0.1f;
                                 }
 
-                                int basePoints = 500 * killedCount;
+                                int basePoints = 250 * killedCount;
                                 score += (int)(basePoints * streakMultiplier);
                                 flowers += killedCount;
                                 totalFlowers += killedCount;
@@ -859,6 +939,8 @@ int main()
                                         streakMultiplier = 1.0f;
                                         currentGraceCharges = maxGraceCapacity;
                                     }
+
+                                    
                                 } else {
                                     if (!IsShieldActive(shieldEndTime)) {
                                         streakKills = 0;
@@ -911,11 +993,16 @@ int main()
                                             }
 
                                             if (streakKills >= 3) {
-                                                isStreakActive = true;
+                                                if (!isStreakActive) {
+                                                    isStreakActive = true;
+                                                    streakTimeRemaining = 5.0f; // Start with 5 seconds on initial streak
+                                                } else {
+                                                    streakTimeRemaining += 1.0f; // Add +1 second for every extra cactus kill
+                                                }
                                                 streakMultiplier = 1.1f + (float)(streakKills - 3) * 0.1f;
                                             }
 
-                                            int basePoints = 500 * actualKills;
+                                            int basePoints = 250 * actualKills;
                                             score += (int)(basePoints * streakMultiplier);
                                             flowers += actualKills;
                                             totalFlowers += actualKills;
@@ -923,8 +1010,20 @@ int main()
                                             movesSinceLastCactusKill = 0;
                                         }
 
-                                        pendingCactusRespawn = true; 
-                                        movesToCactusRespawn = 2;
+                                        // --- DYNAMIC STAGE-AWARE INSTANT RESPAWN FIX ---
+                                        int dummyCycle = 0;
+                                        int targetCactuses = GetCactusAmount(gameCtx.totalCactiKilled, dummyCycle);
+
+                                        // If board is empty AND target count for current stage is 1, spawn immediately regardless of cycle count
+                                        if (cactuses.empty() && targetCactuses == 1) {
+                                            SpawnCactus(hero);
+                                            pendingCactusRespawn = false;
+                                            movesToCactusRespawn = 0;
+                                        } else {
+                                            // Multi-cactus stages keep the delayed timer
+                                            pendingCactusRespawn = true; 
+                                            movesToCactusRespawn = 2;
+                                        }
                                     }
 
                                     it = mushrooms.erase(it);
@@ -977,11 +1076,16 @@ int main()
                                 }
 
                                 if (streakKills >= 3) {
-                                    isStreakActive = true;
+                                    if (!isStreakActive) {
+                                        isStreakActive = true;
+                                        streakTimeRemaining = 5.0f; // Start with 5 seconds on initial streak
+                                    } else {
+                                        streakTimeRemaining += 1.0f; // Add +1 second for every extra cactus kill
+                                    }
                                     streakMultiplier = 1.1f + (float)(streakKills - 3) * 0.1f;
                                 }
 
-                                int basePoints = 500;
+                                int basePoints = 250;
                                 int earnedPoints = (int)(basePoints * streakMultiplier);
                                 score += earnedPoints;
                                 flowers += 1;
@@ -1010,6 +1114,8 @@ int main()
                                             streakMultiplier = 1.0f;
                                             currentGraceCharges = maxGraceCapacity;
                                         }
+
+                                        
                                     } 
                                     else 
                                     {
@@ -1056,20 +1162,23 @@ int main()
                                             actualKills++;
                                         }
 
-                                        // Restore/extend streak upon killing cactus via mushroom
                                         if (actualKills > 0) {
                                             streakKills += actualKills;
-
                                             if (currentGraceCharges < maxGraceCapacity) {
                                                 currentGraceCharges++;
                                             }
 
                                             if (streakKills >= 3) {
-                                                isStreakActive = true;
+                                                if (!isStreakActive) {
+                                                    isStreakActive = true;
+                                                  streakTimeRemaining = 5.0f; // Start with 5 seconds on initial streak
+                                                } else {
+                                                   streakTimeRemaining += 1.0f; // Add +1 second for every extra cactus kill
+                                                }
                                                 streakMultiplier = 1.1f + (float)(streakKills - 3) * 0.1f;
                                             }
 
-                                            int basePoints = 500 * actualKills;
+                                            int basePoints = 250 * actualKills;
                                             score += (int)(basePoints * streakMultiplier);
                                             flowers += actualKills;
                                             totalFlowers += actualKills;
@@ -1077,8 +1186,20 @@ int main()
                                             movesSinceLastCactusKill = 0;
                                         }
 
-                                        pendingCactusRespawn = true; 
-                                        movesToCactusRespawn = 2;
+                                        // --- DYNAMIC STAGE-AWARE INSTANT RESPAWN FIX ---
+                                        int dummyCycle = 0;
+                                        int targetCactuses = GetCactusAmount(gameCtx.totalCactiKilled, dummyCycle);
+
+                                        // If board is empty AND target count for current stage is 1, spawn immediately regardless of cycle count
+                                        if (cactuses.empty() && targetCactuses == 1) {
+                                            SpawnCactus(hero);
+                                            pendingCactusRespawn = false;
+                                            movesToCactusRespawn = 0;
+                                        } else {
+                                            // Multi-cactus stages keep the delayed timer
+                                            pendingCactusRespawn = true; 
+                                            movesToCactusRespawn = 2;
+                                        }
                                     }
 
                                     it = mushrooms.erase(it);
@@ -1102,12 +1223,29 @@ int main()
                             }
                         }
 
+                            //Respawn cactus if destroed by mushroom
+                        if (moved || isDash) 
+                        {
+                        
+                            if (pendingCactusRespawn) 
+                            {
+                                movesToCactusRespawn--; // Count down 1 move
+                    
+                                // When 2 moves have passed, trigger the spawn and turn off flag
+                                if (movesToCactusRespawn <= 0) 
+                                {
+                                    SpawnCactus(hero);
+                                    pendingCactusRespawn = false;
+                                }
+                            }
+                        }
+
 
                             //convert flowers to hp
                         if(flowers >= 3)
                         {
                             hp++;
-                            score = score + 250;
+                            score = score + 200;
                             flowers = flowers - 3;
                         }
 
@@ -1118,7 +1256,8 @@ int main()
                         }
                     
                             //Calculates how many cactuses should be on screen
-                        int targetCactuses = GetCactusAmount(gameCtx.totalCactiKilled);
+                        // Replaces previous GetCactusAmount call in SCENE_GAME:
+                        int targetCactuses = GetCactusAmount(gameCtx.totalCactiKilled, gameCtx.cycleCount);
 
 
                         // Hold off spawning extra cactuses while waiting for the timer
@@ -1161,6 +1300,7 @@ int main()
                     }
                     
                 }
+                SyncContextFromVars();
                 break;
             }
         } // End of switch(currentScene)
@@ -1224,18 +1364,31 @@ int main()
                 DrawCircle(mPixelX, mPixelY, 14, mColor);
             }
 
-            if (isStreakActive) {
+            DrawText(TextFormat("CYCLE: %d", gameCtx.cycleCount + 1), 15, 115, 14, DARKPURPLE);
+
+                //render streak and grace charges
+            if (gameCtx.isStreakActive) {
                 int centerX = gameWidth / 2;
 
-                // Multiplier Text
-                const char* streakText = TextFormat("STREAK x%.1f!", streakMultiplier);
-                int streakTextWidth = MeasureText(streakText, 20);
-                DrawText(streakText, centerX - (streakTextWidth / 2), 118, 20, GOLD);
+                // Determine pulse frequency and text color based on remaining time
+                float pulseSpeed = (gameCtx.streakTimeRemaining <= 2.0f) ? 10.0f : 4.0f; // Faster when <= 2 seconds
+                Color streakColor = (gameCtx.streakTimeRemaining <= 2.0f) ? ORANGE : GOLD;
 
-                // Grace Text (Shows "INF" when shield is active)
+                // Calculate smooth sine-wave scale factor for text size (base 20px, oscillates +- 3px)
+                float scaleOffset = sinf(GetTime() * pulseSpeed) * 3.0f;
+                int dynamicFontSize = 20 + (int)scaleOffset;
+
+                // 1. Pulsating Multiplier Text
+                const char* streakText = TextFormat("STREAK x%.1f!", gameCtx.streakMultiplier);
+                int streakTextWidth = MeasureText(streakText, dynamicFontSize);
+                
+                // Centered position adjusts slightly on dynamic size to keep aligned
+                DrawText(streakText, centerX - (streakTextWidth / 2), 110 - ((int)scaleOffset / 2), dynamicFontSize, streakColor);
+
+                // 2. Grace Charges Indicator
                 const char* graceText = IsShieldActive(shieldEndTime) 
                     ? "GRACE: INF" 
-                    : TextFormat("GRACE: %d/%d", currentGraceCharges, maxGraceCapacity);
+                    : TextFormat("GRACE: %d/%d", gameCtx.currentGraceCharges, gameCtx.maxGraceCapacity);
                     
                 int graceTextWidth = MeasureText(graceText, 14);
                 Color graceColor = IsShieldActive(shieldEndTime) ? SKYBLUE : ORANGE;
@@ -1387,6 +1540,7 @@ int main()
                         DrawText("*", settingsBtn.x + 10, settingsBtn.y + 5, 30, WHITE);
                     }
 
+                    
                     // 2. Render Settings Overlay ON TOP of everything if open
                     if (showSettings) {
                         DrawRectangle(0, 0, gameWidth, gameHeight, Fade(BLACK, 0.85f));
