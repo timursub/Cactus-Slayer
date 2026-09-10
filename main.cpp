@@ -283,7 +283,7 @@ int GetMushroomCactusKills(int lvl) {
 
 // Revised Spawn Chance: Level 0 (2%) to Level 5 (7%)
 int GetMushroomSpawnChance(int lvl) {
-    const int chances[] = { 2, 3, 4, 5, 6, 7 };
+    const float chances[] = { 2.0f, 2.5f, 3.0f, 3.5f, 4.5f, 5.0f };
     return chances[std::min(lvl, 5)];
 }
 
@@ -405,6 +405,7 @@ int main()
     PlayerUpgrades playerUpgrades;
     LoadGameData(highestScore, playerUpgrades);
 
+   
     RenderTexture2D target = LoadRenderTexture(gameWidth, gameHeight);
     SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
 
@@ -446,6 +447,14 @@ int main()
     bool showSettings = false;
 
     GameContext gameCtx;
+
+    playerUpgrades.playerHpLvl     = 5; // 8 Max HP
+    playerUpgrades.shieldLvl       = 5; // 7s Shield
+    playerUpgrades.hpMushroomLvl   = 2; // +3 HP Mushroom
+    playerUpgrades.killMushroomLvl = 2; // 3 Cacti Mushroom
+    playerUpgrades.mushSpawnRateLvl= 5; // 7% Spawn Rate
+    playerUpgrades.knifeLvl        = 1; // 2 Knives Enabled
+    totalFlowers                   = 99999; // Infinite Flowers
 
     // Add this right after initializing your local variables in main()
     auto SyncVarsFromContext = [&]() {
@@ -759,18 +768,7 @@ int main()
                             }
                         }
 
-                            //Updates streak timer
-                        if (isStreakActive) {
-                            streakTimeRemaining -= GetFrameTime();
-                            
-                            // Time ran out -> Streak breaks immediately
-                            if (streakTimeRemaining <= 0.0f) {
-                                isStreakActive = false;
-                                streakKills = 0;
-                                streakMultiplier = 1.0f;
-                                streakTimeRemaining = 0.0f;
-                            }
-                        }
+                        
 
                         if (!showSettings && !isPaused && gameState == STATE_PLAYING) {
                             // Run timer countdown every frame
@@ -818,11 +816,11 @@ int main()
                                     if (streakKills >= 3) {
                                         if (!isStreakActive) {
                                             isStreakActive = true;
-                                            streakTimeRemaining = 5.0f; // Start with 5 seconds on initial streak
+                                            streakTimeRemaining = 4.0f;
                                         } else {
-                                            streakTimeRemaining += 1.0f; // Add +1 second for every extra cactus kill
+                                            streakTimeRemaining = std::min(streakTimeRemaining + 1.0f, 4.0f); // Capped at 4s max
                                         }
-                                        streakMultiplier = 1.1f + (float)(streakKills - 3) * 0.1f;
+                                        streakMultiplier = 2.1f + (float)(streakKills - 3) * 0.1f;
                                     }
 
                                     int basePoints = 250;
@@ -912,11 +910,11 @@ int main()
                                 if (streakKills >= 3) {
                                     if (!isStreakActive) {
                                         isStreakActive = true;
-                                        streakTimeRemaining = 5.0f; // Start with 5 seconds on initial streak
+                                        streakTimeRemaining = 4.0f;
                                     } else {
-                                        streakTimeRemaining += 1.0f; // Add +1 second for every extra cactus kill
+                                        streakTimeRemaining = std::min(streakTimeRemaining + 1.0f, 4.0f); // Capped at 4s max
                                     }
-                                    streakMultiplier = 1.1f + (float)(streakKills - 3) * 0.1f;
+                                    streakMultiplier = 2.1f + (float)(streakKills - 3) * 0.1f;
                                 }
 
                                 int basePoints = 250 * killedCount;
@@ -995,11 +993,11 @@ int main()
                                             if (streakKills >= 3) {
                                                 if (!isStreakActive) {
                                                     isStreakActive = true;
-                                                    streakTimeRemaining = 5.0f; // Start with 5 seconds on initial streak
+                                                    streakTimeRemaining = 4.0f;
                                                 } else {
-                                                    streakTimeRemaining += 1.0f; // Add +1 second for every extra cactus kill
+                                                    streakTimeRemaining = std::min(streakTimeRemaining + 1.0f, 4.0f); // Capped at 4s max
                                                 }
-                                                streakMultiplier = 1.1f + (float)(streakKills - 3) * 0.1f;
+                                                streakMultiplier = 2.1f + (float)(streakKills - 3) * 0.1f;
                                             }
 
                                             int basePoints = 250 * actualKills;
@@ -1078,11 +1076,11 @@ int main()
                                 if (streakKills >= 3) {
                                     if (!isStreakActive) {
                                         isStreakActive = true;
-                                        streakTimeRemaining = 5.0f; // Start with 5 seconds on initial streak
+                                        streakTimeRemaining = 4.0f;
                                     } else {
-                                        streakTimeRemaining += 1.0f; // Add +1 second for every extra cactus kill
+                                        streakTimeRemaining = std::min(streakTimeRemaining + 1.0f, 4.0f); // Capped at 4s max
                                     }
-                                    streakMultiplier = 1.1f + (float)(streakKills - 3) * 0.1f;
+                                    streakMultiplier = 2.1f + (float)(streakKills - 3) * 0.1f;
                                 }
 
                                 int basePoints = 250;
@@ -1171,11 +1169,11 @@ int main()
                                             if (streakKills >= 3) {
                                                 if (!isStreakActive) {
                                                     isStreakActive = true;
-                                                  streakTimeRemaining = 5.0f; // Start with 5 seconds on initial streak
+                                                    streakTimeRemaining = 4.0f;
                                                 } else {
-                                                   streakTimeRemaining += 1.0f; // Add +1 second for every extra cactus kill
+                                                    streakTimeRemaining = std::min(streakTimeRemaining + 1.0f, 4.0f); // Capped at 4s max
                                                 }
-                                                streakMultiplier = 1.1f + (float)(streakKills - 3) * 0.1f;
+                                                streakMultiplier = 3.1f + (float)(streakKills - 3) * 0.1f;
                                             }
 
                                             int basePoints = 250 * actualKills;
@@ -1366,33 +1364,48 @@ int main()
 
             DrawText(TextFormat("CYCLE: %d", gameCtx.cycleCount + 1), 15, 115, 14, DARKPURPLE);
 
-                //render streak and grace charges
+            // Render streak and grace charges
             if (gameCtx.isStreakActive) {
                 int centerX = gameWidth / 2;
+                int fontSize = 20;
 
-                // Determine pulse frequency and text color based on remaining time
-                float pulseSpeed = (gameCtx.streakTimeRemaining <= 2.0f) ? 10.0f : 4.0f; // Faster when <= 2 seconds
+                // 1. Static text color based on remaining time
                 Color streakColor = (gameCtx.streakTimeRemaining <= 2.0f) ? ORANGE : GOLD;
 
-                // Calculate smooth sine-wave scale factor for text size (base 20px, oscillates +- 3px)
-                float scaleOffset = sinf(GetTime() * pulseSpeed) * 3.0f;
-                int dynamicFontSize = 20 + (int)scaleOffset;
-
-                // 1. Pulsating Multiplier Text
+                // Centered text
                 const char* streakText = TextFormat("STREAK x%.1f!", gameCtx.streakMultiplier);
-                int streakTextWidth = MeasureText(streakText, dynamicFontSize);
-                
-                // Centered position adjusts slightly on dynamic size to keep aligned
-                DrawText(streakText, centerX - (streakTextWidth / 2), 110 - ((int)scaleOffset / 2), dynamicFontSize, streakColor);
+                int streakTextWidth = MeasureText(streakText, fontSize);
+                int textX = centerX - (streakTextWidth / 2);
+                int textY = 108;
 
-                // 2. Grace Charges Indicator
+                DrawText(streakText, textX, textY, fontSize, streakColor);
+
+                // 2. Centered shrinking line/bar under the streak text
+                const float maxStreakDuration = 4.0f; // Maximum timer cap
+                float fillRatio = gameCtx.streakTimeRemaining / maxStreakDuration;
+                if (fillRatio > 1.0f) fillRatio = 1.0f;
+                if (fillRatio < 0.0f) fillRatio = 0.0f;
+
+                // Full width matches the width of the streak text
+                int fullLineWidth = streakTextWidth;
+                int currentLineWidth = (int)(fullLineWidth * fillRatio);
+
+                int lineY = textY + fontSize + 3; // Positioned right under the text
+                int lineHeight = 3;               // Line thickness
+
+                // Symmetrical center-shrinking calculation
+                int lineX = centerX - (currentLineWidth / 2);
+
+                DrawRectangle(lineX, lineY, currentLineWidth, lineHeight, streakColor);
+
+                // 3. Grace Charges Indicator
                 const char* graceText = IsShieldActive(shieldEndTime) 
                     ? "GRACE: INF" 
                     : TextFormat("GRACE: %d/%d", gameCtx.currentGraceCharges, gameCtx.maxGraceCapacity);
                     
                 int graceTextWidth = MeasureText(graceText, 14);
                 Color graceColor = IsShieldActive(shieldEndTime) ? SKYBLUE : ORANGE;
-                DrawText(graceText, centerX - (graceTextWidth / 2), 138, 14, graceColor);
+                DrawText(graceText, centerX - (graceTextWidth / 2), lineY + 8, 14, graceColor);
             }
 
             if (IsShieldActive(shieldEndTime)) {
