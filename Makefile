@@ -1,17 +1,18 @@
 CXX = clang++
-CXXFLAGS = -std=c++20 -Wall -g -I/opt/homebrew/include
-LDFLAGS = -L/opt/homebrew/lib -lraylib -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo
+CXXFLAGS = -std=c++17 -I/opt/homebrew/include -I/usr/local/include
+LDFLAGS = -L/opt/homebrew/lib -L/usr/local/lib -lraylib -framework OpenGL -framework Cocoa -framework IOKit -framework CoreVideo
 
+SRCS = main.cpp SaveSystem.cpp Cactus.cpp Mushroom.cpp Knife.cpp
+OBJS = $(SRCS:.cpp=.o)
 TARGET = main
-SRC = main.cpp
 
 all: $(TARGET)
 
-$(TARGET): $(SRC)
-	$(CXX) $(CXXFLAGS) $(SRC) -o $(TARGET) $(LDFLAGS)
+$(TARGET): $(OBJS)
+	$(CXX) $(OBJS) -o $(TARGET) $(LDFLAGS)
 
-run: all
-	./$(TARGET)
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(OBJS) $(TARGET)

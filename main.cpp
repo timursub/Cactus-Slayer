@@ -5,323 +5,14 @@
 #include <algorithm>
 #include <fstream>
 
-// Universal fallback helper functions for saving persistent data
-void SaveStorageValue(int position, int value) {
-    std::ofstream outFile("save.data", std::ios::binary | std::ios::in | std::ios::out);
-    if (!outFile.is_open()) {
-        outFile.open("save.data", std::ios::binary | std::ios::trunc);
-    }
-    outFile.seekp(position * sizeof(int));
-    outFile.write(reinterpret_cast<const char*>(&value), sizeof(int));
-}
-
-int LoadStorageValue(int position) {
-    std::ifstream inFile("save.data", std::ios::binary);
-    if (!inFile.is_open()) return 0; // Returns 0 if file doesn't exist yet
-    
-    inFile.seekg(position * sizeof(int));
-    int value = 0;
-    inFile.read(reinterpret_cast<char*>(&value), sizeof(int));
-    return inFile.gcount() > 0 ? value : 0;
-}
-
-// struct to represent a position on the 3x3 grid
-struct Position {
-    int x;
-    int y;
-
-    // Helper operator to easily compare if two positions are equal
-    bool operator==(const Position& other) const {
-        return x == other.x && y == other.y;
-    }
-};
+#include "Types.hpp"
+#include "SaveSystem.hpp"
+#include "Cactus.hpp"
+#include "Mushroom.hpp"
+#include "Knife.hpp"
 
 
 
-//mushroom types
-enum MushroomType {
-    MSH_HP,          // +1 HP
-    MSH_SHIELD,      // Shield for 15 seconds
-    MSH_KILL_CACTUS  // Kills a random cactus
-};
-
-// Storage Positions for Save Data
-typedef enum {
-    STORAGE_POS_HISCORE = 0,
-    STORAGE_POS_FLOWERS = 1
-} StoragePosition;
-
-enum StorageKey {
-    STORAGE_HIGHEST_SCORE = 0,
-    STORAGE_SHIELD_LVL    = 1,
-    STORAGE_HP_MUSH_LVL   = 2,
-    STORAGE_KILL_MUSH_LVL = 3,
-    STORAGE_SPAWN_RATE_LVL= 4,
-    STORAGE_PLAYER_HP_LVL = 5,
-    STORAGE_KNIFE_LVL     = 6
-};
-
-
-//knife constructor
-struct Knife {
-    Position pos;
-};
-
-//mushroom constructor
-struct Mushroom {
-    Position pos;
-    MushroomType type;
-};
-
-struct PlayerUpgrades {
-    int highScore = 0;
-    
-    // Mushroom Levels (0 to Max)
-    int shieldLvl = 0; // Level 0 = 1s, Level 6 = 7s
-    int hpMushroomLvl = 0;     // Level 0 = +1 HP, Level 4 = +5 HP
-    int killMushroomLvl = 0;   // Level 0 = 1 cactus, Level 1 = 2 cactuses
-    int mushSpawnRateLvl = 0;      // Increases 15% spawn chance up to e.g. 35%
-    int playerHpLvl = 0; // Level 0 = 5 HP, Level 5 = 10 HP
-    int knifeLvl = 0; // Level 0 = 1 knife, Level 1 = 2 knives
-};
-
-struct SaveData {
-    int highestScore = 0;
-    PlayerUpgrades upgrades;
-};
-
-// Global vector for mushrooms on screen
-std::vector<Mushroom> mushrooms;
-// Global list of cactuses
-std::vector<Position> cactuses;
-//Global vector for Knife
-std::vector<Knife> droppedKnives;
-
-
-// Function to spawn a cactus on any random empty cell
-void SpawnCactus(Position heroPos) {
-    while (true) {
-        int randX = rand() % 3; // random positions
-        int randY = rand() % 3; 
-        Position candidatePos = {randX, randY};
-
-            //  Don't spawn near the hero
-        int distToHero = std::abs(candidatePos.x - heroPos.x) + std::abs(candidatePos.y - heroPos.y);
-
-        
-        if (distToHero <= 1) continue;
-
-            //  Don't spawn on top of another cactus
-        bool spaceOccupied = false;
-        for (const auto& cactus : cactuses) {
-            if (cactus == candidatePos) {
-                spaceOccupied = true;
-                break;
-            }
-        }
-
-            // Don't spawn on top of mushroom
-        for (const auto& m : mushrooms) {
-            if (m.pos == candidatePos) {
-                spaceOccupied = true;
-                break;
-            }
-        }
-
-        // If space is free, add the cactus and exit loop
-        if (!spaceOccupied) {
-            cactuses.push_back(candidatePos);
-            break;
-        }
-    }
-}
-
-
-// check if a specific position contains a cactus
-bool IsCactusAt(Position pos) {
-    for (const auto& cactus : cactuses) {
-        if (cactus == pos) return true;
-    }
-    return false;
-}
-
-
- //cahck if hero near cactus
-bool IsNearToCactus(Position heroPos) {
-    for (const auto& cactus : cactuses) {
-        int dist = std::abs(heroPos.x - cactus.x) + std::abs(heroPos.y - cactus.y);
-        if (dist == 1) {
-            return true; // Hero landed right next to this cactus!
-        }
-    }
-    return false;
-}
-
-// Returns true if hero currently has an active shield
-bool IsShieldActive(float shieldEndTime) {
-    return GetTime() < shieldEndTime;
-}
-
-
-// how many cactuses should be on screen based on the score
-int GetCactusAmount(int totalKills, int& outCycleCount) {
-    // Stage base kill targets: [1 Cactus, 2 Cacti, 3 Cacti, 2 Cacti]
-    const int baseKillRequirements[] = { 20, 25, 33, 25 };
-    
-    int killsLeft = totalKills;
-    int cycle = 0;
-
-    while (true) {
-        // Calculate scaling multiplier (1.2 ^ cycle)
-        float cycleMultiplier = std::pow(1.2f, cycle);
-
-        for (int stage = 0; stage < 4; stage++) {
-            int scaledThreshold = static_cast<int>(baseKillRequirements[stage] * cycleMultiplier);
-
-            if (killsLeft < scaledThreshold) {
-                outCycleCount = cycle;
-                
-                // Map stages back to target cactus counts
-                switch (stage) {
-                    case 0: return 1; // Stage 1 (1 Cactus)
-                    case 1: return 2; // Stage 2 (2 Cacti)
-                    case 2: return 3; // Stage 3 (3 Cacti)
-                    case 3: return 2; // Stage 4 (2 Cacti returning to 1)
-                }
-            }
-            killsLeft -= scaledThreshold;
-        }
-
-        // Increment cycle after passing all 4 stages
-        cycle++;
-    }
-}
-
-
-// game status
-enum GameState {
-    STATE_PLAYING,
-    STATE_GAME_OVER
-};
-
-// App Scenes
-enum AppScene {
-    SCENE_MAIN_MENU,
-    SCENE_GAME,
-    SCENE_UPGRADES
-};
-
-// Movement Control Scheme
-enum ControlScheme {
-    CONTROL_KEYBOARD,
-    CONTROL_MOUSE
-};
-
-
-
-void SpawnMushroom(Position heroPos) 
-{
-    while (true) 
-    {
-        int randX = rand() % 3;
-        int randY = rand() % 3;
-        Position candidate = {randX, randY};
-
-        // Don't spawn on hero
-        if (candidate == heroPos) continue;
-
-        // Don't spawn on a cactus
-        if (IsCactusAt(candidate)) continue;
-
-        // Don't spawn on another mushroom
-        bool occupied = false;
-        for (const auto& m : mushrooms) {
-            if (m.pos == candidate) { occupied = true; break; }
-        }
-        if (occupied) continue;
-
-        // Pick a random type out of the 3
-        MushroomType randomType = static_cast<MushroomType>(rand() % 3);
-
-        mushrooms.push_back({candidate, randomType});
-        break;
-    }
-}
-
-
-
-// Mushroom spawn
-
-// General cost function based on target level (Lvl 1 = 500f, Lvl 2 = 1000f, etc.)
-int GetStandardUpgradeCost(int currentLvl) {
-    int baseCost = 500;
-    float multiplier = 1.99f;
-    return static_cast<int>(baseCost * std::pow(multiplier, currentLvl));
-}
-// Revised Shield Scaling: Level 0 (2s) to Level 5 (7s)
-float GetShieldDuration(int lvl) {
-    const float durations[] = { 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f };
-    return durations[std::min(lvl, 5)];
-}
-
-// Revised Player Max HP: Level 0 (3 HP) to Level 5 (8 HP)
-int GetMaxPlayerHp(int lvl) {
-    const int hpValues[] = { 3, 4, 5, 6, 7, 8 };
-    return hpValues[std::min(lvl, 5)];
-}
-
-// Revised Mushroom HP Bonus: Level 0 (+1 HP) to Level 2 (+3 HP)
-int GetMushroomHpBonus(int lvl) {
-    const int hpBonus[] = { 1, 2, 3 };
-    return hpBonus[std::min(lvl, 2)];
-}
-
-// Mushroom Cactus Kills: Level 0 (1 Cactus), Level 1 (2 Cacti), Level 2 (3 Cacti)
-int GetMushroomCactusKills(int lvl) {
-    return std::min(lvl + 1, 3);
-}
-
-// Revised Spawn Chance: Level 0 (2%) to Level 5 (7%)
-int GetMushroomSpawnChance(int lvl) {
-    const float chances[] = { 2.0f, 2.5f, 3.0f, 3.5f, 4.5f, 5.0f };
-    return chances[std::min(lvl, 5)];
-}
-
-// Updated Mushroom Kill Upgrade Cost Curve
-int GetKillMushroomCost(int lvl) {
-    if (lvl == 0) return 4000;
-    if (lvl == 1) return 8000;
-    return 0; // Max level reached
-}
-
-struct GameContext {
-    Position hero = {1, 1};
-    int score = 0;
-    int flowers = 0;
-    int hp = 5;
-    int dashCharges = 3;
-    int availableKnives = 1;
-    int maxKnives = 1;
-    float shieldEndTime = 0.0f;
-    GameState state = STATE_PLAYING;
-    
-    // Streak & Grace
-    int streakKills = 0;
-    float streakMultiplier = 1.0f;
-    bool isStreakActive = false;
-    float streakTimeRemaining = 5.0f; 
-    int currentGraceCharges = 1;
-    int maxGraceCapacity = 1;
-
-    // Wave Progression & Kills Tracking
-    int totalCactiKilled = 0;
-    int cycleCount = 0;
-
-    // Respawn & Mushroom Trackers
-    int movesToCactusRespawn = 0;
-    bool pendingCactusRespawn = false;
-    int movesSinceLastCactusKill = 0;
-};
 
 void ResetGame(GameContext& ctx, const PlayerUpgrades& upgrades) {
     ctx.hero = {1, 1};
@@ -330,6 +21,7 @@ void ResetGame(GameContext& ctx, const PlayerUpgrades& upgrades) {
     ctx.hp = GetMaxPlayerHp(upgrades.playerHpLvl);
     ctx.shieldEndTime = 0.0f;
     ctx.state = STATE_PLAYING;
+    ctx.consecutiveEmptyMoves = 0;
     
     cactuses.clear();
     mushrooms.clear();
@@ -358,32 +50,6 @@ void ResetGame(GameContext& ctx, const PlayerUpgrades& upgrades) {
 }
 
 
-// Save data directly to storage file
-void SaveGameData(int highestScore, const PlayerUpgrades& upgrades) {
-    SaveData data;
-    data.highestScore = highestScore;
-    data.upgrades = upgrades;
-
-    // SaveFileData automatically works cross-platform (and syncs on Web/Itch.io)
-    SaveFileData("save.data", &data, sizeof(SaveData));
-}
-
-// Load data from storage file
-void LoadGameData(int& highestScore, PlayerUpgrades& upgrades) {
-    if (FileExists("save.data")) {
-        int bytesRead = 0;
-        unsigned char* fileData = LoadFileData("save.data", &bytesRead);
-
-        if (fileData != NULL && bytesRead == sizeof(SaveData)) {
-            SaveData* loadedData = (SaveData*)fileData;
-            highestScore = loadedData->highestScore;
-            upgrades = loadedData->upgrades;
-        }
-
-        // Raylib requires freeing loaded file memory after use
-        UnloadFileData(fileData);
-    }
-}
 
  
 
@@ -447,7 +113,7 @@ int main()
     bool showSettings = false;
 
     GameContext gameCtx;
-
+/*
     playerUpgrades.playerHpLvl     = 5; // 8 Max HP
     playerUpgrades.shieldLvl       = 5; // 7s Shield
     playerUpgrades.hpMushroomLvl   = 2; // +3 HP Mushroom
@@ -455,7 +121,7 @@ int main()
     playerUpgrades.mushSpawnRateLvl= 5; // 7% Spawn Rate
     playerUpgrades.knifeLvl        = 1; // 2 Knives Enabled
     totalFlowers                   = 99999; // Infinite Flowers
-
+*/
     // Add this right after initializing your local variables in main()
     auto SyncVarsFromContext = [&]() {
         hero = gameCtx.hero;
@@ -467,6 +133,7 @@ int main()
         maxKnives = gameCtx.maxKnives;
         shieldEndTime = gameCtx.shieldEndTime;
         gameState = gameCtx.state;
+        movesSinceLastCactusKill = gameCtx.movesSinceLastCactusKill;
 
         streakKills = gameCtx.streakKills;
         streakMultiplier = gameCtx.streakMultiplier;
@@ -491,6 +158,7 @@ int main()
         gameCtx.maxKnives = maxKnives;
         gameCtx.shieldEndTime = shieldEndTime;
         gameCtx.state = gameState;
+        gameCtx.movesSinceLastCactusKill = movesSinceLastCactusKill;
 
         gameCtx.streakKills = streakKills;
         gameCtx.streakMultiplier = streakMultiplier;
@@ -803,6 +471,7 @@ int main()
 
                                 // 2. Check if knife hits a cactus
                                 if (IsCactusAt(currKnifePos)) {
+                                    gameCtx.consecutiveEmptyMoves = 0;
                                     // Destroy the cactus using C++17 remove-erase pattern
                                     cactuses.erase(std::remove(cactuses.begin(), cactuses.end(), currKnifePos), cactuses.end());
                                     
@@ -841,6 +510,14 @@ int main()
                             }
                             if (!hitCactus)
                                 {
+                                    gameCtx.consecutiveEmptyMoves++;
+                                    if (gameCtx.consecutiveEmptyMoves >= 3) {
+                                        if (!IsShieldActive(shieldEndTime)) {
+                                            hp--;
+                                        }
+                                        gameCtx.consecutiveEmptyMoves = 0;
+                                    }
+                                    
                                     // Non-killing move logic
                                     if (isStreakActive) {
                                         if (!IsShieldActive(shieldEndTime)) {
@@ -900,8 +577,14 @@ int main()
                                 }
                             }
 
+                            // Right above: else if (!landedOnMushroom)
+                            if (landedOnMushroom) {
+                                gameCtx.consecutiveEmptyMoves = 0; // <--- ADD THIS LINE
+                            }
+
                             // 5. Evaluate Kill rewards OR Grace penalties
                             if (killedCount > 0) {
+                                gameCtx.consecutiveEmptyMoves = 0;
                                 streakKills += killedCount;
                                 if (currentGraceCharges < maxGraceCapacity) {
                                     currentGraceCharges++;
@@ -926,6 +609,15 @@ int main()
                             } 
                             // ONLY deduct grace/reset streak if dash killed NOTHING AND did NOT land on a mushroom
                             else if (!landedOnMushroom) {
+
+                                gameCtx.consecutiveEmptyMoves++;
+                            if (gameCtx.consecutiveEmptyMoves >= 3) {
+                                    if (!IsShieldActive(shieldEndTime)) {
+                                        hp--; // Inflict 1 damage on 2nd empty move
+                                    }
+                                    gameCtx.consecutiveEmptyMoves = 0; // Reset counter after penalty tick
+                                }
+                                
                                 if (isStreakActive) {
                                     if (!IsShieldActive(shieldEndTime)) {
                                         currentGraceCharges--;
@@ -1063,8 +755,14 @@ int main()
                                 }
                             }
 
+                            // Right above: else if (!landedOnMushroom)
+                            if (hitMushroom) {
+                                gameCtx.consecutiveEmptyMoves = 0; // <--- ADD THIS LINE
+                            }
+
                             if (hitCactus)
                             {
+                                gameCtx.consecutiveEmptyMoves = 0;
                                 cactuses.erase(std::remove(cactuses.begin(), cactuses.end(), nextHeroPos), cactuses.end()); 
                                 
                                 streakKills++;
@@ -1093,9 +791,17 @@ int main()
                             }
                             else 
                             {
-                                hero = nextHeroPos;
                                 
                                 movesSinceLastCactusKill++;
+
+                                // EMPTY STEP (NO KILL): Increment stall counter and inflict damage on Step 2
+                                gameCtx.consecutiveEmptyMoves++;
+                                if (gameCtx.consecutiveEmptyMoves >= 3) {
+                                    if (!IsShieldActive(shieldEndTime)) {
+                                        hp--; // Inflict 1 damage on 2nd empty move
+                                    }
+                                    gameCtx.consecutiveEmptyMoves = 0; // Reset counter after penalty tick
+                                }
 
                                 // Apply grace penalty ONLY IF the move did NOT hit a cactus AND did NOT land on a mushroom
                                 if (!hitMushroom) 
@@ -1122,7 +828,16 @@ int main()
                                         }
                                     }
                                 }
+                                else 
+                                {
+                                    //empty step logic
+                                    movesSinceLastCactusKill++;
+                                    
+                                }
                             }
+
+
+                                hero = nextHeroPos;
 
 
                             // Collect dropped knives
@@ -1237,6 +952,8 @@ int main()
                                 }
                             }
                         }
+
+                        
 
 
                             //convert flowers to hp
