@@ -16,7 +16,7 @@ float GetShieldDuration(int lvl);
 int GetMaxPlayerHp(int lvl);
 int GetMushroomHpBonus(int lvl);
 int GetMushroomCactusKills(int lvl);
-int GetMushroomSpawnChance(int lvl);
+float GetMushroomSpawnChance(int lvl);
 int GetKillMushroomCost(int lvl);
 bool IsShieldActive(float shieldEndTime);
 

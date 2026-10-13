@@ -66,7 +66,26 @@ int main()
     InitWindow(540, 960, "Cactus Grid - Pixel Edition");
     SetTargetFPS(60);
 
-    //init highest score, and load save from storage
+    // After InitWindow / SetTargetFPS:
+    Texture2D bgTexture = LoadTexture("Assets/Screens/Base_Background.png");
+
+    // Set texture filtering to POINT so pixel art scales crisply without blur
+    SetTextureFilter(bgTexture, TEXTURE_FILTER_POINT);
+
+    // 1. Load animated GIF into CPU RAM
+    int animFrames = 0;
+    Image heroAnimImage = LoadImageAnim("Assets/Ninja/Ninja.gif", &animFrames);
+
+    // 2. Create GPU Texture from the loaded image
+    Texture2D heroTexture = LoadTextureFromImage(heroAnimImage);
+    SetTextureFilter(heroTexture, TEXTURE_FILTER_POINT);
+
+    // 3. Animation state variables
+    int currentHeroFrame = 0;
+    int frameDelayCounter = 0;
+    const int FRAME_DELAY = 8; // Adjust to speed up/slow down animation (higher = slower)
+
+        //init highest score, and load save from storage
     int highestScore = 0;
     PlayerUpgrades playerUpgrades;
     LoadGameData(highestScore, playerUpgrades);
@@ -1013,6 +1032,19 @@ int main()
                             currentScene = SCENE_MAIN_MENU;
                         }
                     }
+
+                    // Advance GIF animation frame
+                    frameDelayCounter++;
+                    if (frameDelayCounter >= FRAME_DELAY) {
+                        frameDelayCounter = 0;
+                        currentHeroFrame = (currentHeroFrame + 1) % animFrames;
+
+                        // Calculate memory offset for the current GIF frame in memory
+                        unsigned int nextFrameDataOffset = heroAnimImage.width * heroAnimImage.height * 4 * currentHeroFrame;
+
+                        // Update GPU texture with current frame data
+                        UpdateTexture(heroTexture, ((unsigned char *)heroAnimImage.data) + nextFrameDataOffset);
+                    }
                     
                 }
                 SyncContextFromVars();
@@ -1064,9 +1096,27 @@ int main()
                 DrawTriangle({ (float)kX, (float)kY }, { (float)kX + 16, (float)kY }, { (float)kX + 8, (float)kY - 12 }, LIGHTGRAY);
             }
 
-            int heroPixelX = hero.x * 100 + 80;
-            int heroPixelY = hero.y * 130 + 225;
-            DrawCircle(heroPixelX, heroPixelY, 22, BLUE);
+            // Center coordinates of current hero tile
+            float heroCenterX = hero.x * 100.0f + 30.0f + 50.0f;
+            float heroCenterY = hero.y * 130.0f + 160.0f + 65.0f;
+
+            // 1. Choose your desired width (scaled up slightly from before)
+            float targetHeroWidth = 72.0f; 
+
+            // 2. Calculate height automatically to match original sprite proportions (no squishing)
+            float aspectRatio = (float)heroTexture.height / (float)heroTexture.width;
+            float targetHeroHeight = targetHeroWidth * aspectRatio;
+
+            Rectangle srcRec = { 0.0f, 0.0f, (float)heroTexture.width, (float)heroTexture.height };
+            Rectangle destRec = { 
+                heroCenterX - (targetHeroWidth / 2.0f), 
+                heroCenterY - (targetHeroHeight / 2.0f), 
+                targetHeroWidth, 
+                targetHeroHeight 
+            };
+
+            // 3. Draw scaled hero sprite with true aspect ratio
+            DrawTexturePro(heroTexture, srcRec, destRec, Vector2{ 0.0f, 0.0f }, 0.0f, WHITE);
 
             for (const auto& m : mushrooms) {
                 int mPixelX = m.pos.x * 100 + 80;
@@ -1126,7 +1176,7 @@ int main()
             }
 
             if (IsShieldActive(shieldEndTime)) {
-                DrawCircleLines(heroPixelX, heroPixelY, 28, SKYBLUE);
+                DrawCircleLines((int)heroCenterX, (int)heroCenterY, 28, SKYBLUE);
             }
 
             if (gameState == STATE_GAME_OVER) {
@@ -1150,7 +1200,15 @@ int main()
         
         // RENDER
         BeginTextureMode(target);
-            ClearBackground(GRAY);
+            // Stretch background texture across the 360x640 virtual canvas
+            DrawTexturePro(
+                bgTexture,
+                Rectangle{ 0.0f, 0.0f, (float)bgTexture.width, (float)bgTexture.height },
+                Rectangle{ 0.0f, 0.0f, (float)gameWidth, (float)gameHeight },
+                Vector2{ 0.0f, 0.0f },
+                0.0f,
+                WHITE
+            );
 
             switch (currentScene) 
             {
@@ -1317,6 +1375,10 @@ int main()
             DrawTexturePro(target.texture, srcRec, destRec, { 0, 0 }, 0.0f, WHITE);
         EndDrawing();
     }
+
+    UnloadTexture(bgTexture);
+    UnloadTexture(heroTexture);
+    UnloadImage(heroAnimImage); // Unload raw GIF data from RAM
 
     UnloadRenderTexture(target);
     CloseWindow();

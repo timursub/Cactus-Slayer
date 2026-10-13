@@ -45,10 +45,23 @@ void LoadGameData(int& highestScore, PlayerUpgrades& upgrades) {
     }
 }
 
+// Snaps raw numbers to clean, readable values
+int MakePriceBeautiful(double rawPrice) {
+    int price = static_cast<int>(rawPrice);
+
+    if (price < 100)    return price;                     // 0 - 99: Exact
+    if (price < 1000)   return (price / 10) * 10;         // 100 - 999: Round to nearest 10 (e.g. 520)
+    if (price < 10000)  return (price / 50) * 50;         // 1,000 - 9,999: Round to nearest 50 (e.g. 3,150)
+    if (price < 100000) return (price / 500) * 500;       // 10,000 - 99,999: Round to nearest 500 (e.g. 19,500)
+    
+    return (price / 5000) * 5000;                         // 100,000+: Round to nearest 5,000
+}
+
 int GetStandardUpgradeCost(int currentLvl) {
     int baseCost = 500;
-    float multiplier = 1.99f;
-    return static_cast<int>(baseCost * std::pow(multiplier, currentLvl));
+    float multiplier = 2.50f;
+    double rawCost = baseCost * std::pow(multiplier, currentLvl);
+    return MakePriceBeautiful(rawCost);
 }
 
 float GetShieldDuration(int lvl) {
@@ -70,14 +83,14 @@ int GetMushroomCactusKills(int lvl) {
     return std::min(lvl + 1, 3);
 }
 
-int GetMushroomSpawnChance(int lvl) {
+float GetMushroomSpawnChance(int lvl) {
     const float chances[] = { 2.0f, 2.5f, 3.0f, 3.5f, 4.5f, 5.0f };
     return chances[std::min(lvl, 5)];
 }
 
 int GetKillMushroomCost(int lvl) {
     if (lvl == 0) return 4000;
-    if (lvl == 1) return 8000;
+    if (lvl == 1) return 12000;
     return 0;
 }
 
