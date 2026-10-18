@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <fstream>
 
+#include "Animation.hpp"
+#include "AssetManager.hpp"
 #include "Types.hpp"
 #include "SaveSystem.hpp"
 #include "Cactus.hpp"
@@ -13,6 +15,11 @@
 
 
 
+float GetNextPositionStep(float current, float target, float maxDelta) {
+    if (current < target) return std::min(current + maxDelta, target);
+    if (current > target) return std::max(current - maxDelta, target);
+    return target;
+}
 
 void ResetGame(GameContext& ctx, const PlayerUpgrades& upgrades) {
     ctx.hero = {1, 1};
@@ -66,35 +73,23 @@ int main()
     InitWindow(540, 960, "Cactus Grid - Pixel Edition");
     SetTargetFPS(60);
 
-    // After InitWindow / SetTargetFPS:
-    Texture2D bgTexture = LoadTexture("Assets/Screens/Base_Background.png");
-
-    // Set texture filtering to POINT so pixel art scales crisply without blur
-    SetTextureFilter(bgTexture, TEXTURE_FILTER_POINT);
-
-    // 1. Load animated GIF into CPU RAM
-    int animFrames = 0;
-    Image heroAnimImage = LoadImageAnim("Assets/Ninja/Ninja.gif", &animFrames);
-
-    // 2. Create GPU Texture from the loaded image
-    Texture2D heroTexture = LoadTextureFromImage(heroAnimImage);
-    SetTextureFilter(heroTexture, TEXTURE_FILTER_POINT);
-
-    // 3. Animation state variables
-    int currentHeroFrame = 0;
-    int frameDelayCounter = 0;
-    const int FRAME_DELAY = 8; // Adjust to speed up/slow down animation (higher = slower)
-
-        //init highest score, and load save from storage
+    LoadAllGameAssets(); // Replaces all individual LoadTexture calls
+        
+    // Load saved game data
     int highestScore = 0;
     PlayerUpgrades playerUpgrades;
     LoadGameData(highestScore, playerUpgrades);
 
-   
-    RenderTexture2D target = LoadRenderTexture(gameWidth, gameHeight);
-    SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
+    // Draw background
+    DrawTexturePro(
+        g_Assets.bgMain,
+        Rectangle{ 0.0f, 0.0f, (float)g_Assets.bgMain.width, (float)g_Assets.bgMain.height },
+        Rectangle{ 0.0f, 0.0f, (float)gameWidth, (float)gameHeight },
+        Vector2{ 0.0f, 0.0f },
+        0.0f,
+        WHITE
+    );
 
-    
     // Hero initial position (Center)
     Position hero = {1, 1};
     int score = 0;
@@ -104,7 +99,6 @@ int main()
     int movesToCactusRespawn = 0;
     int maxKnives = 1;        
     int availableKnives = 1;  
-    int hitCactus = 0;
     const int MAX_DASH_CHARGES = 3; // Max dash charges
     GameState gameState = STATE_PLAYING;
     float shieldEndTime = 0; 
@@ -124,6 +118,20 @@ int main()
 
     // Persistent Saved Data
     int totalFlowers = LoadStorageValue(STORAGE_POS_FLOWERS);
+
+    // Load saved game data
+    RenderTexture2D target = LoadRenderTexture(gameWidth, gameHeight);
+    SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
+
+
+    Vector2 currentVisualPos = { 
+    hero.x * 100.0f + 30.0f + 50.0f, 
+    hero.y * 130.0f + 160.0f + 65.0f 
+    };
+
+    // Movement speed in pixels per second (we can tweak this later!)
+    float moveSpeed = 1000.0f;
+
 
     // App State Flags
     AppScene currentScene = SCENE_MAIN_MENU;
@@ -220,15 +228,88 @@ int main()
     // Spawn first Cactus
     ResetGame(gameCtx, playerUpgrades);
     SyncVarsFromContext();
+    currentVisualPos = Vector2{ hero.x * 100.0f + 80.0f, hero.y * 130.0f + 225.0f };
 
+    
+    Vector2 rawMouse = { 0 };
+    Vector2 mousePoint = { 0 };
+
+    // Lambda to draw base background + active scene overlay layer
+    auto DrawBackgroundWithOverlay = [&](Texture2D overlayTex) {
+        // 1. Base background
+        DrawTexturePro(
+            g_Assets.bgMain,
+            Rectangle{ 0.0f, 0.0f, (float)g_Assets.bgMain.width, (float)g_Assets.bgMain.height },
+            Rectangle{ 0.0f, 0.0f, (float)gameWidth, (float)gameHeight },
+            Vector2{ 0.0f, 0.0f }, 0.0f, WHITE
+        );
+
+        // 2. Scene overlay layer
+        if (overlayTex.id > 0) {
+            DrawTexturePro(
+                overlayTex,
+                Rectangle{ 0.0f, 0.0f, (float)overlayTex.width, (float)overlayTex.height },
+                Rectangle{ 0.0f, 0.0f, (float)gameWidth, (float)gameHeight },
+                Vector2{ 0.0f, 0.0f }, 0.0f, WHITE
+            );
+        }
+    };
 
     
         // GAME LOOP
     while (!WindowShouldClose()) 
     {
-        // Calculate virtual mouse coordinates for scaled canvas UI checks
-        Vector2 rawMouse = GetMousePosition();
-        Vector2 mousePoint = 
+        float dt = GetFrameTime();
+
+        // Update animation frame timers every frame
+        UpdateAssetAnimations(dt);
+
+        // Target pixel coordinates of hero's current logical grid tile
+        // 1. Target pixel coordinates of hero's current logical grid tile
+        Vector2 targetVisualPos = {
+            hero.x * 100.0f + 80.0f,
+            hero.y * 130.0f + 225.0f
+        };
+
+        // 2. Compute delta and remaining distance
+        float slideDx = targetVisualPos.x - currentVisualPos.x;
+        float slideDy = targetVisualPos.y - currentVisualPos.y;
+        float slideDist = std::abs(slideDx) + std::abs(slideDy);
+
+        // 3. Keep movement state active during slide without resetting animStateTimer every frame
+        if (slideDist > 2.0f) {
+            bool isMovingState = (g_Assets.currentHeroState == PLAYER_ANIM_MOVE_RIGHT ||
+                                  g_Assets.currentHeroState == PLAYER_ANIM_MOVE_LEFT  ||
+                                  g_Assets.currentHeroState == PLAYER_ANIM_MOVE_UP    ||
+                                  g_Assets.currentHeroState == PLAYER_ANIM_MOVE_DOWN);
+
+            if (!isMovingState) {
+                if (std::abs(slideDx) > std::abs(slideDy)) {
+                    if (slideDx > 0) SetPlayerAnimationState(PLAYER_ANIM_MOVE_RIGHT, 0.25f);
+                    else             SetPlayerAnimationState(PLAYER_ANIM_MOVE_LEFT, 0.25f);
+                } else {
+                    if (slideDy > 0) SetPlayerAnimationState(PLAYER_ANIM_MOVE_DOWN, 0.25f);
+                    else             SetPlayerAnimationState(PLAYER_ANIM_MOVE_UP, 0.25f);
+                }
+            }
+        } else {
+            // Once destination tile is reached, return state to idle if still in movement state
+            if (g_Assets.currentHeroState == PLAYER_ANIM_MOVE_RIGHT ||
+                g_Assets.currentHeroState == PLAYER_ANIM_MOVE_LEFT  ||
+                g_Assets.currentHeroState == PLAYER_ANIM_MOVE_UP    ||
+                g_Assets.currentHeroState == PLAYER_ANIM_MOVE_DOWN) {
+                g_Assets.currentHeroState = PLAYER_ANIM_IDLE;
+            }
+        }
+
+        // 4. Smoothly step visual position toward target grid tile
+        currentVisualPos.x = GetNextPositionStep(currentVisualPos.x, targetVisualPos.x, moveSpeed * dt);
+        currentVisualPos.y = GetNextPositionStep(currentVisualPos.y, targetVisualPos.y, moveSpeed * dt);
+
+        
+        // Re-assign existing variables without re-declaring Vector2
+        rawMouse = GetMousePosition();
+        mousePoint = 
         {
             rawMouse.x * ((float)gameWidth / GetScreenWidth()),
             rawMouse.y * ((float)gameHeight / GetScreenHeight())
@@ -256,6 +337,7 @@ int main()
                         // Resetting on menu play or game restart
                         ResetGame(gameCtx, playerUpgrades);
                         SyncVarsFromContext();
+                        currentVisualPos = Vector2{ hero.x * 100.0f + 80.0f, hero.y * 130.0f + 225.0f };
                         currentScene = SCENE_GAME;
                     }
                     if (CheckCollisionPointRec(mousePoint, upgradesBtn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -385,24 +467,40 @@ int main()
                         
                         // KEYBOARD INPUTS
                         if (IsKeyPressed(KEY_D)) {
-                            // Hold Space at x=0 -> Dash all the way RIGHT to x=2
-                            if (canDash && hero.x == 0) { nextHeroPos.x = 2; moved = true; isDash = true; }
-                            else if (hero.x < 2)          { nextHeroPos.x++; moved = true; }
+                            if (canDash && hero.x == 0) {
+                                nextHeroPos.x = 2; moved = true; isDash = true;
+                                SetPlayerAnimationState(PLAYER_ANIM_DASH, 0.35f);
+                            } else if (hero.x < 2) {
+                                nextHeroPos.x++; moved = true;
+                                SetPlayerAnimationState(PLAYER_ANIM_MOVE_RIGHT, 0.25f);
+                            }
                         }
                         if (IsKeyPressed(KEY_A)) {
-                            // Hold Space at x=2 -> Dash all the way LEFT to x=0
-                            if (canDash && hero.x == 2) { nextHeroPos.x = 0; moved = true; isDash = true; }
-                            else if (hero.x > 0)          { nextHeroPos.x--; moved = true; }
+                            if (canDash && hero.x == 2) {
+                                nextHeroPos.x = 0; moved = true; isDash = true;
+                                SetPlayerAnimationState(PLAYER_ANIM_DASH, 0.35f);
+                            } else if (hero.x > 0) {
+                                nextHeroPos.x--; moved = true;
+                                SetPlayerAnimationState(PLAYER_ANIM_MOVE_LEFT, 0.25f);
+                            }
                         }
                         if (IsKeyPressed(KEY_S)) {
-                            // Hold Space at y=0 -> Dash all the way DOWN to y=2
-                            if (canDash && hero.y == 0) { nextHeroPos.y = 2; moved = true; isDash = true; }
-                            else if (hero.y < 2)          { nextHeroPos.y++; moved = true; }
+                            if (canDash && hero.y == 0) {
+                                nextHeroPos.y = 2; moved = true; isDash = true;
+                                SetPlayerAnimationState(PLAYER_ANIM_DASH, 0.35f);
+                            } else if (hero.y < 2) {
+                                nextHeroPos.y++; moved = true;
+                                SetPlayerAnimationState(PLAYER_ANIM_MOVE_DOWN, 0.25f);
+                            }
                         }
                         if (IsKeyPressed(KEY_W)) {
-                            // Hold Space at y=2 -> Dash all the way UP to y=0
-                            if (canDash && hero.y == 2) { nextHeroPos.y = 0; moved = true; isDash = true; }
-                            else if (hero.y > 0)          { nextHeroPos.y--; moved = true; }
+                            if (canDash && hero.y == 2) {
+                                nextHeroPos.y = 0; moved = true; isDash = true;
+                                SetPlayerAnimationState(PLAYER_ANIM_DASH, 0.35f);
+                            } else if (hero.y > 0) {
+                                nextHeroPos.y--; moved = true;
+                                SetPlayerAnimationState(PLAYER_ANIM_MOVE_UP, 0.25f);
+                            }
                         }
 
                         // Knife Input
@@ -418,7 +516,7 @@ int main()
                             if (IsKeyPressed(KEY_C)) { knifeDir = { 1,  1}; threwKnife = true; }
                         }
 
-                        // MOUSE / TOUCHSCREEN INPUT
+                       // MOUSE / TOUCHSCREEN INPUT
                         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !moved && !threwKnife) {
                             for (int r = 0; r < 3; r++) {
                                 for (int c = 0; c < 3; c++) {
@@ -430,32 +528,37 @@ int main()
                                         int absX = std::abs(dx);
                                         int absY = std::abs(dy);
 
-                                        // A. ADJACENT CELL CLICK (Move or Attack Cactus)
+                                        // A. ADJACENT CELL CLICK (Move)
                                         if (absX + absY == 1) {
                                             nextHeroPos = { c, r };
                                             moved = true;
+
+                                            if (dx > 0)      SetPlayerAnimationState(PLAYER_ANIM_MOVE_RIGHT, 0.25f);
+                                            else if (dx < 0) SetPlayerAnimationState(PLAYER_ANIM_MOVE_LEFT, 0.25f);
+                                            else if (dy > 0) SetPlayerAnimationState(PLAYER_ANIM_MOVE_DOWN, 0.25f);
+                                            else if (dy < 0) SetPlayerAnimationState(PLAYER_ANIM_MOVE_UP, 0.25f);
                                         }
                                         // B. DIAGONAL CELL CLICK (Throw Knife)
                                         else if (absX > 0 && absY > 0) {
                                             if (availableKnives > 0) {
                                                 knifeDir = { (dx > 0) ? 1 : -1, (dy > 0) ? 1 : -1 };
                                                 threwKnife = true;
+                                                SetPlayerAnimationState(PLAYER_ANIM_THROW, 0.25f);
                                             }
                                         }
-                                        // C. STRAIGHT NON-ADJACENT CELL CLICK (Dash)
+                                        // C. STRAIGHT NON-ADJACENT CLICK (Dash)
                                         else if ((dx == 0 || dy == 0) && (absX + absY > 1)) {
                                             if (dashCharges > 0 && !IsShieldActive(shieldEndTime)) {
                                                 nextHeroPos = { c, r };
                                                 moved = true;
                                                 isDash = true;
+                                                SetPlayerAnimationState(PLAYER_ANIM_DASH, 0.35f);
                                             }
                                         }
                                     }
                                 }
                             }
-                        }
-
-                        
+                        } 
 
                         if (!showSettings && !isPaused && gameState == STATE_PLAYING) {
                             // Run timer countdown every frame
@@ -681,7 +784,7 @@ int main()
                                     }
                                     else if (it->type == MSH_SHIELD) 
                                     {
-                                        shieldEndTime = GetTime() + GetShieldDuration(playerUpgrades.shieldLvl);
+                                        shieldEndTime = (float)GetTime() + GetShieldDuration(playerUpgrades.shieldLvl);
                                     }
                                     else if (it->type == MSH_KILL_CACTUS) 
                                     {
@@ -880,7 +983,7 @@ int main()
                                     }
                                     else if (it->type == MSH_SHIELD) 
                                     {
-                                        shieldEndTime = GetTime() + GetShieldDuration(playerUpgrades.shieldLvl);
+                                        shieldEndTime = (float)GetTime() + GetShieldDuration(playerUpgrades.shieldLvl);
                                     }
                                     else if (it->type == MSH_KILL_CACTUS) 
                                     {
@@ -1027,24 +1130,13 @@ int main()
                             // Resetting on menu play or game restart
                             ResetGame(gameCtx, playerUpgrades);
                             SyncVarsFromContext();
+                            currentVisualPos = Vector2{ hero.x * 100.0f + 80.0f, hero.y * 130.0f + 225.0f };
                         }
                         else if (mouseExitClicked) {
                             currentScene = SCENE_MAIN_MENU;
                         }
                     }
 
-                    // Advance GIF animation frame
-                    frameDelayCounter++;
-                    if (frameDelayCounter >= FRAME_DELAY) {
-                        frameDelayCounter = 0;
-                        currentHeroFrame = (currentHeroFrame + 1) % animFrames;
-
-                        // Calculate memory offset for the current GIF frame in memory
-                        unsigned int nextFrameDataOffset = heroAnimImage.width * heroAnimImage.height * 4 * currentHeroFrame;
-
-                        // Update GPU texture with current frame data
-                        UpdateTexture(heroTexture, ((unsigned char *)heroAnimImage.data) + nextFrameDataOffset);
-                    }
                     
                 }
                 SyncContextFromVars();
@@ -1055,6 +1147,8 @@ int main()
 
         // LAMBDA FOR RENDER
         auto DrawGameScene = [&]() {
+
+            
             DrawText(TextFormat("HI-SCORE: %d", highestScore), 15, 15, 18, GOLD);
             DrawText(TextFormat("SCORE: %d", score), 15, 40, 18, BLACK);
             DrawText(TextFormat("HP: %d", hp), 15, 65, 18, RED);
@@ -1096,27 +1190,32 @@ int main()
                 DrawTriangle({ (float)kX, (float)kY }, { (float)kX + 16, (float)kY }, { (float)kX + 8, (float)kY - 12 }, LIGHTGRAY);
             }
 
-            // Center coordinates of current hero tile
-            float heroCenterX = hero.x * 100.0f + 30.0f + 50.0f;
-            float heroCenterY = hero.y * 130.0f + 160.0f + 65.0f;
+            //HERO
+            Vector2 visualHeroPos = currentVisualPos;
 
-            // 1. Choose your desired width (scaled up slightly from before)
-            float targetHeroWidth = 72.0f; 
+            // Draw Animated Hero
+            switch (g_Assets.currentHeroState) {
+                case PLAYER_ANIM_MOVE_RIGHT:
+                    g_Assets.playerMoveRight.Draw(visualHeroPos, 72.0f);
+                    break;
+                case PLAYER_ANIM_MOVE_LEFT:
+                    g_Assets.playerMoveRight.Draw(visualHeroPos, 72.0f, WHITE, true);
+                    break;
+                case PLAYER_ANIM_MOVE_UP:
+                    g_Assets.playerMoveUp.Draw(visualHeroPos, 72.0f);
+                    break;
+                case PLAYER_ANIM_MOVE_DOWN:
+                    g_Assets.playerMoveDown.Draw(visualHeroPos, 72.0f);
+                    break;
+                default:
+                    g_Assets.playerIdle.Draw(visualHeroPos, 72.0f);
+                    break;
+            }
 
-            // 2. Calculate height automatically to match original sprite proportions (no squishing)
-            float aspectRatio = (float)heroTexture.height / (float)heroTexture.width;
-            float targetHeroHeight = targetHeroWidth * aspectRatio;
-
-            Rectangle srcRec = { 0.0f, 0.0f, (float)heroTexture.width, (float)heroTexture.height };
-            Rectangle destRec = { 
-                heroCenterX - (targetHeroWidth / 2.0f), 
-                heroCenterY - (targetHeroHeight / 2.0f), 
-                targetHeroWidth, 
-                targetHeroHeight 
-            };
-
-            // 3. Draw scaled hero sprite with true aspect ratio
-            DrawTexturePro(heroTexture, srcRec, destRec, Vector2{ 0.0f, 0.0f }, 0.0f, WHITE);
+            // Draw Shield attached to smooth visual position
+            if (IsShieldActive(shieldEndTime)) {
+                DrawCircleLines((int)visualHeroPos.x, (int)visualHeroPos.y, 28, SKYBLUE);
+            }
 
             for (const auto& m : mushrooms) {
                 int mPixelX = m.pos.x * 100 + 80;
@@ -1176,7 +1275,7 @@ int main()
             }
 
             if (IsShieldActive(shieldEndTime)) {
-                DrawCircleLines((int)heroCenterX, (int)heroCenterY, 28, SKYBLUE);
+                DrawCircleLines((int)visualHeroPos.x, (int)visualHeroPos.y, 28, SKYBLUE);
             }
 
             if (gameState == STATE_GAME_OVER) {
@@ -1197,13 +1296,34 @@ int main()
         }
         };
 
+        //Lambda for base background
+        auto DrawBackgroundWithOverlay = [&](Texture2D overlayTex) {
+            // 1. Base background
+            DrawTexturePro(
+                g_Assets.bgMain,
+                Rectangle{ 0.0f, 0.0f, (float)g_Assets.bgMain.width, (float)g_Assets.bgMain.height },
+                Rectangle{ 0.0f, 0.0f, (float)gameWidth, (float)gameHeight },
+                Vector2{ 0.0f, 0.0f }, 0.0f, WHITE
+            );
+
+            // 2. Scene overlay layer (if valid texture)
+            if (overlayTex.id > 0) {
+                DrawTexturePro(
+                    overlayTex,
+                    Rectangle{ 0.0f, 0.0f, (float)overlayTex.width, (float)overlayTex.height },
+                    Rectangle{ 0.0f, 0.0f, (float)gameWidth, (float)gameHeight },
+                    Vector2{ 0.0f, 0.0f }, 0.0f, WHITE
+                );
+            }
+        };
+
         
         // RENDER
         BeginTextureMode(target);
             // Stretch background texture across the 360x640 virtual canvas
             DrawTexturePro(
-                bgTexture,
-                Rectangle{ 0.0f, 0.0f, (float)bgTexture.width, (float)bgTexture.height },
+                g_Assets.bgMain,
+                Rectangle{ 0.0f, 0.0f, (float)g_Assets.bgMain.width, (float)g_Assets.bgMain.height },
                 Rectangle{ 0.0f, 0.0f, (float)gameWidth, (float)gameHeight },
                 Vector2{ 0.0f, 0.0f },
                 0.0f,
@@ -1215,6 +1335,7 @@ int main()
                 case SCENE_MAIN_MENU: 
                 {
                     // 1. Draw Base Main Menu UI
+                    DrawBackgroundWithOverlay(g_Assets.bgOverlayMenu);
                     
                     DrawRectangleRec(playBtn, DARKBLUE);
                     DrawText("PLAY", playBtn.x + 50, playBtn.y + 12, 24, WHITE);
@@ -1252,6 +1373,8 @@ int main()
 
                 case SCENE_UPGRADES: 
                 {
+                    DrawBackgroundWithOverlay(g_Assets.bgOverlayShop);
+
                     DrawRectangleRec(backBtn, DARKGRAY);
                     DrawText("< BACK", backBtn.x + 8, backBtn.y + 6, 16, WHITE);
                     DrawText("UPGRADES SHOP", 95, 20, 22, GOLD);
@@ -1320,6 +1443,8 @@ int main()
 
                 case SCENE_GAME: 
                 {
+                    DrawBackgroundWithOverlay(g_Assets.bgOverlayGame);
+
                     // 1. ALWAYS execute the drawing lambda first to render game world
                     DrawGameScene();
 
@@ -1328,7 +1453,7 @@ int main()
                         DrawText("*", settingsBtn.x + 10, settingsBtn.y + 5, 30, WHITE);
                     }
 
-                    
+               
                     // 2. Render Settings Overlay ON TOP of everything if open
                     if (showSettings) {
                         DrawRectangle(0, 0, gameWidth, gameHeight, Fade(BLACK, 0.85f));
@@ -1376,10 +1501,7 @@ int main()
         EndDrawing();
     }
 
-    UnloadTexture(bgTexture);
-    UnloadTexture(heroTexture);
-    UnloadImage(heroAnimImage); // Unload raw GIF data from RAM
-
+    UnloadAllGameAssets();
     UnloadRenderTexture(target);
     CloseWindow();
     return 0;
