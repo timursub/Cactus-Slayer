@@ -6,6 +6,9 @@ struct GameAssets {
     // Backgrounds & Screens
     Texture2D bgMain;
     
+    // Fonts
+    Font mainFont;
+    
     // Objects
     Texture2D cactusTexture;
     Texture2D mushHpTexture;

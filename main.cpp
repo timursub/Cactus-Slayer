@@ -1144,45 +1144,49 @@ int main()
             }
         } // End of switch(currentScene)
 
-
-        // LAMBDA FOR RENDER
+// LAMBDA FOR RENDER
         auto DrawGameScene = [&]() {
+            // HUD Top Bar
+            DrawTextEx(g_Assets.mainFont, TextFormat("HI-SCORE: %d", highestScore), Vector2{ 15.0f, 15.0f }, 15.0f, 1.0f, GOLD);
+            DrawTextEx(g_Assets.mainFont, TextFormat("SCORE: %d", score), Vector2{ 15.0f, 38.0f }, 15.0f, 1.0f, BLACK);
+            DrawTextEx(g_Assets.mainFont, TextFormat("HP: %d", hp), Vector2{ 15.0f, 61.0f }, 15.0f, 1.0f, RED);
 
-            
-            DrawText(TextFormat("HI-SCORE: %d", highestScore), 15, 15, 18, GOLD);
-            DrawText(TextFormat("SCORE: %d", score), 15, 40, 18, BLACK);
-            DrawText(TextFormat("HP: %d", hp), 15, 65, 18, RED);
-
-            DrawText("DASH:", 15, 90, 14, DARKBLUE);
+            // Dash Charges
+            DrawTextEx(g_Assets.mainFont, "DASH:", Vector2{ 15.0f, 85.0f }, 12.0f, 1.0f, DARKBLUE);
             for (int i = 0; i < MAX_DASH_CHARGES; i++) {
                 Color dashColor = (i < dashCharges) ? BLUE : DARKGRAY;
-                DrawRectangle(65 + (i * 18), 92, 14, 10, dashColor);
-                DrawRectangleLines(65 + (i * 18), 92, 14, 10, WHITE);
+                DrawRectangle(60 + (i * 16), 87, 12, 9, dashColor);
+                DrawRectangleLines(60 + (i * 16), 87, 12, 9, WHITE);
             }
             
-            DrawText(TextFormat("KNIVES: %d/%d", availableKnives, maxKnives), 220, 90, 14, BROWN);
+            // Knives Counter
+            DrawTextEx(g_Assets.mainFont, TextFormat("KNIVES: %d/%d", availableKnives, maxKnives), Vector2{ 220.0f, 85.0f }, 12.0f, 1.0f, BROWN);
 
-            DrawText("FLOWERS", 250, 18, 14, DARKGREEN);
+            // Flowers Indicators
+            DrawTextEx(g_Assets.mainFont, "FLOWERS", Vector2{ 250.0f, 15.0f }, 12.0f, 1.0f, DARKGREEN);
             for (int i = 0; i < 3; i++) {
-                int slotX = 250 + (i * 30);
-                int slotY = 50;
+                int slotX = 250 + (i * 28);
+                int slotY = 45;
                 Color flowerColor = (i < flowers) ? PINK : DARKGRAY;
-                DrawCircle(slotX, slotY, 9, flowerColor);
-                DrawCircleLines(slotX, slotY, 10, WHITE);
+                DrawCircle(slotX, slotY, 8, flowerColor);
+                DrawCircleLines(slotX, slotY, 9, WHITE);
             }
 
+            // Grid Lines
             for (int r = 0; r < 3; r++) {
                 for (int c = 0; c < 3; c++) {
-                    DrawRectangleLines((c * 100)+30, (r * 130) + 160, 100, 130, DARKGRAY);
+                    DrawRectangleLines((c * 100) + 30, (r * 130) + 160, 100, 130, DARKGRAY);
                 }
             }
 
+            // Cacti Entities
             for (const auto& cactus : cactuses) {
                 int cactusPixelX = cactus.x * 100 + 45;
                 int cactusPixelY = cactus.y * 130 + 185;
                 DrawRectangle(cactusPixelX, cactusPixelY, 70, 80, DARKGREEN);
             }
 
+            // Dropped Knives Entities
             for (const auto& k : droppedKnives) {
                 int kX = k.pos.x * 100 + 72;
                 int kY = k.pos.y * 130 + 215;
@@ -1190,7 +1194,7 @@ int main()
                 DrawTriangle({ (float)kX, (float)kY }, { (float)kX + 16, (float)kY }, { (float)kX + 8, (float)kY - 12 }, LIGHTGRAY);
             }
 
-            //HERO
+            // HERO
             Vector2 visualHeroPos = currentVisualPos;
 
             // Draw Animated Hero
@@ -1217,6 +1221,7 @@ int main()
                 DrawCircleLines((int)visualHeroPos.x, (int)visualHeroPos.y, 28, SKYBLUE);
             }
 
+            // Mushroom Entities
             for (const auto& m : mushrooms) {
                 int mPixelX = m.pos.x * 100 + 80;
                 int mPixelY = m.pos.y * 130 + 225;
@@ -1228,142 +1233,110 @@ int main()
                 DrawCircle(mPixelX, mPixelY, 14, mColor);
             }
 
-            DrawText(TextFormat("CYCLE: %d", gameCtx.cycleCount + 1), 15, 115, 14, DARKPURPLE);
+            // Cycle Tracker
+            DrawTextEx(g_Assets.mainFont, TextFormat("CYCLE: %d", gameCtx.cycleCount + 1), Vector2{ 15.0f, 108.0f }, 12.0f, 1.0f, DARKPURPLE);
 
-            // Render streak and grace charges
+            // Streak & Grace Charges HUD
             if (gameCtx.isStreakActive) {
-                int centerX = gameWidth / 2;
-                int fontSize = 20;
+                float centerX = (float)gameWidth / 2.0f;
+                float fontSize = 16.0f;
 
-                // 1. Static text color based on remaining time
                 Color streakColor = (gameCtx.streakTimeRemaining <= 2.0f) ? ORANGE : GOLD;
 
-                // Centered text
+                // Centered streak text using MeasureTextEx
                 const char* streakText = TextFormat("STREAK x%.1f!", gameCtx.streakMultiplier);
-                int streakTextWidth = MeasureText(streakText, fontSize);
-                int textX = centerX - (streakTextWidth / 2);
-                int textY = 108;
+                Vector2 streakTextSize = MeasureTextEx(g_Assets.mainFont, streakText, fontSize, 1.0f);
+                float textX = centerX - (streakTextSize.x / 2.0f);
+                float textY = 108.0f;
 
-                DrawText(streakText, textX, textY, fontSize, streakColor);
+                DrawTextEx(g_Assets.mainFont, streakText, Vector2{ textX, textY }, fontSize, 1.0f, streakColor);
 
-                // 2. Centered shrinking line/bar under the streak text
-                const float maxStreakDuration = 4.0f; // Maximum timer cap
+                // Centered shrinking timer bar
+                const float maxStreakDuration = 4.0f;
                 float fillRatio = gameCtx.streakTimeRemaining / maxStreakDuration;
                 if (fillRatio > 1.0f) fillRatio = 1.0f;
                 if (fillRatio < 0.0f) fillRatio = 0.0f;
 
-                // Full width matches the width of the streak text
-                int fullLineWidth = streakTextWidth;
-                int currentLineWidth = (int)(fullLineWidth * fillRatio);
+                float fullLineWidth = streakTextSize.x;
+                float currentLineWidth = fullLineWidth * fillRatio;
 
-                int lineY = textY + fontSize + 3; // Positioned right under the text
-                int lineHeight = 3;               // Line thickness
+                float lineY = textY + fontSize + 2.0f;
+                float lineHeight = 2.0f;
+                float lineX = centerX - (currentLineWidth / 2.0f);
 
-                // Symmetrical center-shrinking calculation
-                int lineX = centerX - (currentLineWidth / 2);
+                DrawRectangle((int)lineX, (int)lineY, (int)currentLineWidth, (int)lineHeight, streakColor);
 
-                DrawRectangle(lineX, lineY, currentLineWidth, lineHeight, streakColor);
-
-                // 3. Grace Charges Indicator
+                // Grace Charges Indicator
                 const char* graceText = IsShieldActive(shieldEndTime) 
                     ? "GRACE: INF" 
                     : TextFormat("GRACE: %d/%d", gameCtx.currentGraceCharges, gameCtx.maxGraceCapacity);
                     
-                int graceTextWidth = MeasureText(graceText, 14);
+                Vector2 graceTextSize = MeasureTextEx(g_Assets.mainFont, graceText, 12.0f, 1.0f);
                 Color graceColor = IsShieldActive(shieldEndTime) ? SKYBLUE : ORANGE;
-                DrawText(graceText, centerX - (graceTextWidth / 2), lineY + 8, 14, graceColor);
+                
+                DrawTextEx(g_Assets.mainFont, graceText, Vector2{ centerX - (graceTextSize.x / 2.0f), lineY + 6.0f }, 12.0f, 1.0f, graceColor);
             }
 
-            if (IsShieldActive(shieldEndTime)) {
-                DrawCircleLines((int)visualHeroPos.x, (int)visualHeroPos.y, 28, SKYBLUE);
-            }
-
+            // Game Over Overlay
             if (gameState == STATE_GAME_OVER) {
-            DrawRectangle(0, 0, gameWidth, gameHeight, Fade(BLACK, 0.7f));
-            DrawText("GAME OVER", 60, 260, 36, RED);
+                DrawRectangle(0, 0, gameWidth, gameHeight, Fade(BLACK, 0.7f));
+                
+                // Centered Game Over Title
+                Vector2 gameOverSize = MeasureTextEx(g_Assets.mainFont, "GAME OVER", 30.0f, 1.0f);
+                DrawTextEx(g_Assets.mainFont, "GAME OVER", Vector2{ ((float)gameWidth - gameOverSize.x) / 2.0f, 260.0f }, 30.0f, 1.0f, RED);
 
-            // 1. Restart Button
-            Color restartBtnColor = CheckCollisionPointRec(mousePoint, restartBtn) ? LIGHTGRAY : DARKGRAY;
-            DrawRectangleRec(restartBtn, restartBtnColor);
-            DrawRectangleLinesEx(restartBtn, 3, WHITE);
-            DrawText("RESTART", restartBtn.x + 40, restartBtn.y + 14, 24, WHITE);
+                // 1. Restart Button
+                Color restartBtnColor = CheckCollisionPointRec(mousePoint, restartBtn) ? LIGHTGRAY : DARKGRAY;
+                DrawRectangleRec(restartBtn, restartBtnColor);
+                DrawRectangleLinesEx(restartBtn, 3, WHITE);
+                
+                Vector2 restartTextSize = MeasureTextEx(g_Assets.mainFont, "RESTART", 20.0f, 1.0f);
+                DrawTextEx(g_Assets.mainFont, "RESTART", Vector2{ restartBtn.x + (restartBtn.width - restartTextSize.x) / 2.0f, restartBtn.y + 15.0f }, 20.0f, 1.0f, WHITE);
 
-            // 2. Red Exit to Menu Button (matching Pause Menu styling)
-            Color exitBtnColor = CheckCollisionPointRec(mousePoint, exitGameBtn) ? MAROON : RED;
-            DrawRectangleRec(exitGameBtn, exitBtnColor);
-            DrawRectangleLinesEx(exitGameBtn, 3, WHITE);
-            DrawText("EXIT TO MENU", exitGameBtn.x + 18, exitGameBtn.y + 16, 18, WHITE);
-        }
-        };
+                // 2. Exit to Menu Button
+                Color exitBtnColor = CheckCollisionPointRec(mousePoint, exitGameBtn) ? MAROON : RED;
+                DrawRectangleRec(exitGameBtn, exitBtnColor);
+                DrawRectangleLinesEx(exitGameBtn, 3, WHITE);
 
-        //Lambda for base background
-        auto DrawBackgroundWithOverlay = [&](Texture2D overlayTex) {
-            // 1. Base background
-            DrawTexturePro(
-                g_Assets.bgMain,
-                Rectangle{ 0.0f, 0.0f, (float)g_Assets.bgMain.width, (float)g_Assets.bgMain.height },
-                Rectangle{ 0.0f, 0.0f, (float)gameWidth, (float)gameHeight },
-                Vector2{ 0.0f, 0.0f }, 0.0f, WHITE
-            );
-
-            // 2. Scene overlay layer (if valid texture)
-            if (overlayTex.id > 0) {
-                DrawTexturePro(
-                    overlayTex,
-                    Rectangle{ 0.0f, 0.0f, (float)overlayTex.width, (float)overlayTex.height },
-                    Rectangle{ 0.0f, 0.0f, (float)gameWidth, (float)gameHeight },
-                    Vector2{ 0.0f, 0.0f }, 0.0f, WHITE
-                );
+                Vector2 exitTextSize = MeasureTextEx(g_Assets.mainFont, "EXIT TO MENU", 15.0f, 1.0f);
+                DrawTextEx(g_Assets.mainFont, "EXIT TO MENU", Vector2{ exitGameBtn.x + (exitGameBtn.width - exitTextSize.x) / 2.0f, exitGameBtn.y + 17.0f }, 15.0f, 1.0f, WHITE);
             }
         };
-
         
         // RENDER
         BeginTextureMode(target);
-            // Stretch background texture across the 360x640 virtual canvas
-            DrawTexturePro(
-                g_Assets.bgMain,
-                Rectangle{ 0.0f, 0.0f, (float)g_Assets.bgMain.width, (float)g_Assets.bgMain.height },
-                Rectangle{ 0.0f, 0.0f, (float)gameWidth, (float)gameHeight },
-                Vector2{ 0.0f, 0.0f },
-                0.0f,
-                WHITE
-            );
 
-            switch (currentScene) 
+        switch (currentScene) 
             {
                 case SCENE_MAIN_MENU: 
                 {
-                    // 1. Draw Base Main Menu UI
                     DrawBackgroundWithOverlay(g_Assets.bgOverlayMenu);
                     
+                    // Buttons
                     DrawRectangleRec(playBtn, DARKBLUE);
-                    DrawText("PLAY", playBtn.x + 50, playBtn.y + 12, 24, WHITE);
+                    DrawTextEx(g_Assets.mainFont, "PLAY", Vector2{ playBtn.x + 50.0f, playBtn.y + 14.0f }, 20.0f, 1.0f, WHITE);
 
                     DrawRectangleRec(upgradesBtn, DARKGREEN);
-                    DrawText("SHOP", upgradesBtn.x + 48, upgradesBtn.y + 12, 24, WHITE);
+                    DrawTextEx(g_Assets.mainFont, "SHOP", Vector2{ upgradesBtn.x + 48.0f, upgradesBtn.y + 14.0f }, 20.0f, 1.0f, WHITE);
 
                     DrawRectangleRec(settingsBtn, DARKGRAY);
-                    DrawText("*", settingsBtn.x + 10, settingsBtn.y + 5, 30, WHITE);
+                    DrawTextEx(g_Assets.mainFont, "*", Vector2{ settingsBtn.x + 10.0f, settingsBtn.y + 5.0f }, 26.0f, 1.0f, WHITE);
 
-                    //Draw Flowers count
-                    DrawText("CACTUS GRID", 50, 100, 32, DARKGREEN);
-                    // Render lifetime bank balance at the top left of the menu
-                    DrawText(TextFormat("FLOWERS: %d", totalFlowers), 15, 15, 18, PINK);
+                    // Title Header
+                    DrawTextEx(g_Assets.mainFont, "CACTUS GRID", Vector2{ 50.0f, 100.0f }, 26.0f, 1.0f, DARKGREEN);
+                    
+                    // Lifetime Flowers Balance
+                    DrawTextEx(g_Assets.mainFont, TextFormat("FLOWERS: %d", totalFlowers), Vector2{ 15.0f, 15.0f }, 15.0f, 1.0f, PINK);
 
-                    // 2. Draw Settings Overlay on top of Main Menu if open
+                    // 2. Settings Overlay (Main Menu)
                     if (showSettings) {
-                        // Darken the background menu
                         DrawRectangle(0, 0, gameWidth, gameHeight, Fade(BLACK, 0.85f));
 
-                        // Back button & Title
                         DrawRectangleRec(backBtn, DARKGRAY);
-                        DrawText("< BACK", backBtn.x + 8, backBtn.y + 6, 16, WHITE);
-                        DrawText("SETTINGS", 120, 20, 24, WHITE);
+                        DrawTextEx(g_Assets.mainFont, "< BACK", Vector2{ backBtn.x + 8.0f, backBtn.y + 7.0f }, 14.0f, 1.0f, WHITE);
+                        DrawTextEx(g_Assets.mainFont, "SETTINGS", Vector2{ 120.0f, 20.0f }, 20.0f, 1.0f, WHITE);
                         
-                        
-                        // Volume bar
-                        DrawText(TextFormat("Volume: %d%%", (int)(volume * 100)), 50, 280, 18, WHITE);
+                        DrawTextEx(g_Assets.mainFont, TextFormat("Volume: %d%%", (int)(volume * 100)), Vector2{ 50.0f, 280.0f }, 15.0f, 1.0f, WHITE);
                         DrawRectangleRec(volBar, LIGHTGRAY);
                         DrawRectangle(volBar.x, volBar.y, volBar.width * volume, volBar.height, BLUE);
                         DrawRectangleLinesEx(volBar, 2, WHITE);
@@ -1376,64 +1349,54 @@ int main()
                     DrawBackgroundWithOverlay(g_Assets.bgOverlayShop);
 
                     DrawRectangleRec(backBtn, DARKGRAY);
-                    DrawText("< BACK", backBtn.x + 8, backBtn.y + 6, 16, WHITE);
-                    DrawText("UPGRADES SHOP", 95, 20, 22, GOLD);
-                    DrawText(TextFormat("FLOWERS: %d", totalFlowers), 120, 55, 18, PINK);
+                    DrawTextEx(g_Assets.mainFont, "< BACK", Vector2{ backBtn.x + 8.0f, backBtn.y + 7.0f }, 14.0f, 1.0f, WHITE);
+                    DrawTextEx(g_Assets.mainFont, "UPGRADES SHOP", Vector2{ 100.0f, 20.0f }, 18.0f, 1.0f, GOLD);
+                    DrawTextEx(g_Assets.mainFont, TextFormat("FLOWERS: %d", totalFlowers), Vector2{ 120.0f, 55.0f }, 15.0f, 1.0f, PINK);
 
-                    // Lambda helper for rendering uniform shop rows with transition format
                     auto DrawUpgradeRow = [&](Rectangle rec, const char* label, std::string val, int cost, bool maxed) {
                         DrawRectangleRec(rec, maxed ? DARKGRAY : (totalFlowers >= cost ? DARKGREEN : GRAY));
                         DrawRectangleLinesEx(rec, 2, WHITE);
-                        DrawText(label, rec.x + 8, rec.y + 12, 13, WHITE);
+                        DrawTextEx(g_Assets.mainFont, label, Vector2{ rec.x + 8.0f, rec.y + 13.0f }, 12.0f, 1.0f, WHITE);
                         
-                        // Displays current -> next when upgrading, or just current when maxed
-                        DrawText(val.c_str(), rec.x + 115, rec.y + 12, 13, YELLOW);
+                        DrawTextEx(g_Assets.mainFont, val.c_str(), Vector2{ rec.x + 115.0f, rec.y + 13.0f }, 12.0f, 1.0f, YELLOW);
 
                         if (maxed) {
-                            DrawText("MAX", rec.x + 265, rec.y + 12, 14, RED);
+                            DrawTextEx(g_Assets.mainFont, "MAX", Vector2{ rec.x + 265.0f, rec.y + 13.0f }, 12.0f, 1.0f, RED);
                         } else {
-                            DrawText(TextFormat("%df", cost), rec.x + 250, rec.y + 12, 13, PINK);
+                            DrawTextEx(g_Assets.mainFont, TextFormat("%df", cost), Vector2{ rec.x + 250.0f, rec.y + 13.0f }, 12.0f, 1.0f, PINK);
                         }
                     };
 
-                    
-                    // 1. Max HP
                     bool hpMax = playerUpgrades.playerHpLvl >= 8;
                     std::string hpTxt = hpMax 
                         ? TextFormat("%d HP", GetMaxPlayerHp(playerUpgrades.playerHpLvl))
                         : TextFormat("%d -> %d HP", GetMaxPlayerHp(playerUpgrades.playerHpLvl), GetMaxPlayerHp(playerUpgrades.playerHpLvl + 1));
                     DrawUpgradeRow(btnPlayerHp, "Max HP", hpTxt, GetStandardUpgradeCost(playerUpgrades.playerHpLvl), hpMax);
 
-                    // 2. Shield Duration
                     bool shieldMax = playerUpgrades.shieldLvl >= 6;
                     std::string shieldTxt = shieldMax 
                         ? TextFormat("%.0fs", GetShieldDuration(playerUpgrades.shieldLvl))
                         : TextFormat("%.0fs -> %.0fs", GetShieldDuration(playerUpgrades.shieldLvl), GetShieldDuration(playerUpgrades.shieldLvl + 1));
                     DrawUpgradeRow(btnShield, "Shield Dur.", shieldTxt, GetStandardUpgradeCost(playerUpgrades.shieldLvl), shieldMax);
 
-
-                    // 3. Mushroom HP
                     bool mushHpMax = playerUpgrades.hpMushroomLvl >= 9;
                     std::string mushHpTxt = mushHpMax 
                         ? TextFormat("+%d HP", GetMushroomHpBonus(playerUpgrades.hpMushroomLvl))
                         : TextFormat("+%d -> +%d", GetMushroomHpBonus(playerUpgrades.hpMushroomLvl), GetMushroomHpBonus(playerUpgrades.hpMushroomLvl + 1));
                     DrawUpgradeRow(btnMushHp, "Mush HP", mushHpTxt, GetStandardUpgradeCost(playerUpgrades.hpMushroomLvl), mushHpMax);
 
-                    // 4. Mushroom Kills
                     bool mushKillMax = playerUpgrades.killMushroomLvl >= 2;
                     std::string mushKillTxt = mushKillMax 
                         ? TextFormat("%d Cacti", GetMushroomCactusKills(playerUpgrades.killMushroomLvl))
                         : TextFormat("%d -> %d", GetMushroomCactusKills(playerUpgrades.killMushroomLvl), GetMushroomCactusKills(playerUpgrades.killMushroomLvl + 1));
                     DrawUpgradeRow(btnMushKill, "Mush Kills", mushKillTxt, GetKillMushroomCost(playerUpgrades.killMushroomLvl), mushKillMax);
 
-                    // 5. Mushroom Spawn Rate
                     bool spawnMax = playerUpgrades.mushSpawnRateLvl >= 8;
                     std::string spawnTxt = spawnMax 
                         ? TextFormat("%d%%", GetMushroomSpawnChance(playerUpgrades.mushSpawnRateLvl))
                         : TextFormat("%d%% -> %d%%", GetMushroomSpawnChance(playerUpgrades.mushSpawnRateLvl), GetMushroomSpawnChance(playerUpgrades.mushSpawnRateLvl + 1));
                     DrawUpgradeRow(btnSpawnRate, "Mush Spawn", spawnTxt, GetStandardUpgradeCost(playerUpgrades.mushSpawnRateLvl), spawnMax);
 
-                    // 6. 2 Knives
                     bool knifeMax = playerUpgrades.knifeLvl >= 1;
                     std::string knifeTxt = knifeMax ? "Knives" : "1 -> 2";
                     DrawUpgradeRow(btnKnives, "Knives", knifeTxt, 5000, knifeMax);
@@ -1445,50 +1408,41 @@ int main()
                 {
                     DrawBackgroundWithOverlay(g_Assets.bgOverlayGame);
 
-                    // 1. ALWAYS execute the drawing lambda first to render game world
                     DrawGameScene();
 
                     if (gameState != STATE_GAME_OVER) {
                         DrawRectangleRec(settingsBtn, DARKGRAY);
-                        DrawText("*", settingsBtn.x + 10, settingsBtn.y + 5, 30, WHITE);
+                        DrawTextEx(g_Assets.mainFont, "*", Vector2{ settingsBtn.x + 10.0f, settingsBtn.y + 5.0f }, 26.0f, 1.0f, WHITE);
                     }
 
-               
-                    // 2. Render Settings Overlay ON TOP of everything if open
                     if (showSettings) {
                         DrawRectangle(0, 0, gameWidth, gameHeight, Fade(BLACK, 0.85f));
                         DrawRectangleRec(backBtn, DARKGRAY);
-                        DrawText("< BACK", backBtn.x + 8, backBtn.y + 6, 16, WHITE);
-                        DrawText("SETTINGS", 120, 20, 24, WHITE);
+                        DrawTextEx(g_Assets.mainFont, "< BACK", Vector2{ backBtn.x + 8.0f, backBtn.y + 7.0f }, 14.0f, 1.0f, WHITE);
+                        DrawTextEx(g_Assets.mainFont, "SETTINGS", Vector2{ 120.0f, 20.0f }, 20.0f, 1.0f, WHITE);
 
-                       
-                        DrawText(TextFormat("Volume: %d%%", (int)(volume * 100)), 50, 280, 18, WHITE);
+                        DrawTextEx(g_Assets.mainFont, TextFormat("Volume: %d%%", (int)(volume * 100)), Vector2{ 50.0f, 280.0f }, 15.0f, 1.0f, WHITE);
                         DrawRectangleRec(volBar, LIGHTGRAY);
                         DrawRectangle(volBar.x, volBar.y, volBar.width * volume, volBar.height, BLUE);
                         DrawRectangleLinesEx(volBar, 2, WHITE);
                     }
-                    // 3. Render Pause Overlay ON TOP of game if paused
                     else if (isPaused) {
                         DrawRectangle(0, 0, gameWidth, gameHeight, Fade(BLACK, 0.6f));
-                        DrawText("PAUSED", 115, 140, 32, WHITE);
+                        DrawTextEx(g_Assets.mainFont, "PAUSED", Vector2{ 120.0f, 140.0f }, 26.0f, 1.0f, WHITE);
 
                         DrawRectangleRec(proceedBtn, DARKBLUE);
-                        DrawText("PROCEED", proceedBtn.x + 30, proceedBtn.y + 12, 20, WHITE);
+                        DrawTextEx(g_Assets.mainFont, "PROCEED", Vector2{ proceedBtn.x + 30.0f, proceedBtn.y + 14.0f }, 16.0f, 1.0f, WHITE);
 
                         DrawRectangleRec(pauseSettingsBtn, DARKGRAY);
-                        DrawText("SETTINGS", pauseSettingsBtn.x + 25, pauseSettingsBtn.y + 12, 20, WHITE);
+                        DrawTextEx(g_Assets.mainFont, "SETTINGS", Vector2{ pauseSettingsBtn.x + 25.0f, pauseSettingsBtn.y + 14.0f }, 16.0f, 1.0f, WHITE);
 
                         DrawRectangleRec(exitBtn, RED);
-                        DrawText("EXIT TO MENU", exitBtn.x + 10, exitBtn.y + 12, 18, WHITE);
+                        DrawTextEx(g_Assets.mainFont, "EXIT TO MENU", Vector2{ exitBtn.x + 12.0f, exitBtn.y + 14.0f }, 15.0f, 1.0f, WHITE);
                     }
                     break;
                 }
-            
-                
-
-                
             }
-            
+                
         EndTextureMode();
 
         BeginDrawing();

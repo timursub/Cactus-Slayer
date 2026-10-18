@@ -26,6 +26,14 @@ void LoadAllGameAssets() {
         g_Assets.playerMoveUp = g_Assets.playerIdle;
         g_Assets.playerMoveDown = g_Assets.playerIdle;
     }
+    // load font
+    if (FileExists("Assets/Fonts/PressStart2P-Regular.ttf")) {
+        g_Assets.mainFont = LoadFontEx("Assets/Fonts/PressStart2P-Regular.ttf", 32, NULL, 0);
+        SetTextureFilter(g_Assets.mainFont.texture, TEXTURE_FILTER_POINT);
+    } else {
+        // Fallback to Raylib default font if file is missing
+        g_Assets.mainFont = GetFontDefault();
+    }
 }
 
 void UpdateAssetAnimations(float dt) {
